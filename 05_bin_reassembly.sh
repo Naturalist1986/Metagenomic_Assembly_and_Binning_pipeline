@@ -333,6 +333,78 @@ get_refined_bins_dir() {
     return 1
 }
 
+# Function to create merged reads on-demand for treatment-level binning
+create_merged_reads() {
+    local treatment="$1"
+
+    log "Creating merged reads for treatment: $treatment"
+
+    local merged_reads_dir="${OUTPUT_DIR}/coassembly/${treatment}/merged_reads"
+    mkdir -p "$merged_reads_dir"
+
+    # Get all samples for this treatment
+    local samples=($(get_samples_for_treatment "$treatment"))
+
+    if [ ${#samples[@]} -eq 0 ]; then
+        log "ERROR: No samples found for treatment $treatment"
+        return 1
+    fi
+
+    log "Found ${#samples[@]} samples to merge: ${samples[*]}"
+
+    # Collect read files
+    local r1_files=()
+    local r2_files=()
+    local singleton_files=()
+
+    for sample in "${samples[@]}"; do
+        local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample}"
+
+        local read1="${quality_dir}/filtered_1.fastq.gz"
+        local read2="${quality_dir}/filtered_2.fastq.gz"
+        local singletons="${quality_dir}/singletons.fastq.gz"
+
+        if [ -f "$read1" ] && [ -f "$read2" ]; then
+            r1_files+=("$read1")
+            r2_files+=("$read2")
+            log "  Sample $sample: reads found"
+
+            if [ -f "$singletons" ] && [ -s "$singletons" ]; then
+                singleton_files+=("$singletons")
+                log "    (includes singletons)"
+            fi
+        else
+            log "  WARNING: Skipping $sample - reads not found at $quality_dir"
+        fi
+    done
+
+    # Verify we have files to merge
+    if [ ${#r1_files[@]} -eq 0 ]; then
+        log "ERROR: No valid read files found for treatment $treatment"
+        return 1
+    fi
+
+    # Concatenate reads
+    local merged_r1="${merged_reads_dir}/merged_R1.fastq.gz"
+    local merged_r2="${merged_reads_dir}/merged_R2.fastq.gz"
+    local merged_singletons="${merged_reads_dir}/merged_singletons.fastq.gz"
+
+    log "Merging R1 files from ${#r1_files[@]} samples..."
+    cat "${r1_files[@]}" > "$merged_r1"
+
+    log "Merging R2 files from ${#r2_files[@]} samples..."
+    cat "${r2_files[@]}" > "$merged_r2"
+
+    # Merge singletons if any exist
+    if [ ${#singleton_files[@]} -gt 0 ]; then
+        log "Merging singleton files from ${#singleton_files[@]} samples..."
+        cat "${singleton_files[@]}" > "$merged_singletons"
+    fi
+
+    log "Merged reads created successfully at: $merged_reads_dir"
+    return 0
+}
+
 # Function to get appropriate reads based on bin location (treatment-level vs sample-level)
 get_reads_for_reassembly() {
     local sample_name="$1"
@@ -345,23 +417,35 @@ get_reads_for_reassembly() {
     if [[ "$refined_bins_dir" == *"/${treatment}/dastool_DASTool_bins" ]] && [[ "$refined_bins_dir" != *"/${treatment}/${sample_name}/"* ]]; then
         # Treatment-level bins - use merged reads from coassembly
         local merged_reads_dir="${OUTPUT_DIR}/coassembly/${treatment}/merged_reads"
+        local read1="${merged_reads_dir}/merged_R1.fastq.gz"
+        local read2="${merged_reads_dir}/merged_R2.fastq.gz"
+        local singletons="${merged_reads_dir}/merged_singletons.fastq.gz"
 
-        if [ -d "$merged_reads_dir" ]; then
-            local read1="${merged_reads_dir}/merged_R1.fastq.gz"
-            local read2="${merged_reads_dir}/merged_R2.fastq.gz"
-            local singletons="${merged_reads_dir}/merged_singletons.fastq.gz"
-
-            if [ -f "$read1" ] && [ -f "$read2" ]; then
-                log "  Using treatment-level merged reads from coassembly"
-                log "    R1: $read1"
-                log "    R2: $read2"
-                echo "$read1|$read2|$singletons|treatment-level"
-                return 0
-            else
-                log "  ERROR: Merged reads not found at: $merged_reads_dir"
-            fi
+        # Check if merged reads already exist
+        if [ -f "$read1" ] && [ -f "$read2" ]; then
+            log "  Using existing treatment-level merged reads"
+            log "    R1: $read1"
+            log "    R2: $read2"
+            echo "$read1|$read2|$singletons|treatment-level"
+            return 0
         else
-            log "  ERROR: Merged reads directory not found: $merged_reads_dir"
+            # Merged reads don't exist - create them on-demand
+            log "  Merged reads not found - creating them now..."
+            if create_merged_reads "$treatment"; then
+                if [ -f "$read1" ] && [ -f "$read2" ]; then
+                    log "  Using newly created treatment-level merged reads"
+                    log "    R1: $read1"
+                    log "    R2: $read2"
+                    echo "$read1|$read2|$singletons|treatment-level"
+                    return 0
+                else
+                    log "  ERROR: Failed to verify merged reads after creation"
+                    return 1
+                fi
+            else
+                log "  ERROR: Failed to create merged reads"
+                return 1
+            fi
         fi
     fi
 
