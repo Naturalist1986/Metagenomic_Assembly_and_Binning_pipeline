@@ -10,8 +10,12 @@
 # 05_bin_reassembly.sh - Bin reassembly using MetaWRAP and SPAdes
 
 # Source configuration and utilities
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
+    source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "${SCRIPT_DIR}/00_config_utilities.sh"
+fi
 
 # Get sample info from array task ID
 SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)
@@ -317,8 +321,8 @@ stage_bin_reassembly() {
         return 0
     fi
     
-    # Check for refined bins
-    local refined_bins_dir="${refinement_dir}/metawrap_50_10_bins"
+    # Check for refined bins (from DAS Tool stage 04)
+    local refined_bins_dir="${refinement_dir}/dastool_DASTool_bins"
     if [ ! -d "$refined_bins_dir" ] || [ ! "$(ls -A "$refined_bins_dir"/*.fa 2>/dev/null)" ]; then
         log "ERROR: No refined bins found for $sample_name"
         log "  Expected: $refined_bins_dir"

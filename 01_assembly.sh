@@ -10,10 +10,10 @@
 # 01_assembly.sh - MetaSPAdes assembly stage with singletons
 
 # Source configuration and utilities
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
     source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
 else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     source "${SCRIPT_DIR}/00_config_utilities.sh"
 fi
 

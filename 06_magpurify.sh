@@ -10,8 +10,12 @@
 # 06_magpurify.sh - MAGpurify contamination removal stage
 
 # Source configuration and utilities
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
+    source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "${SCRIPT_DIR}/00_config_utilities.sh"
+fi
 
 # Get sample info from array task ID
 SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)

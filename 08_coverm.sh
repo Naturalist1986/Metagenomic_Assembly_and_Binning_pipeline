@@ -10,8 +10,12 @@
 # 08_coverm.sh - CoverM abundance calculation using purified bins
 
 # Source configuration and utilities
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
+    source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "${SCRIPT_DIR}/00_config_utilities.sh"
+fi
 
 # Get sample info from array task ID
 SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)
@@ -93,11 +97,11 @@ get_best_bins_source() {
     
     log "Determining best available bins source for $sample_name..."
     
-    # Priority order: MAGpurify > Reassembly > Refinement
+    # Priority order: MAGpurify > Reassembly > Refinement (DAS Tool bins)
     local sources=(
         "${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins:MAGpurify purified bins"
         "${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}/reassembled_bins:Reassembled bins"
-        "${OUTPUT_DIR}/bin_refinement/${treatment}/${sample_name}/metawrap_50_10_bins:Refined bins"
+        "${OUTPUT_DIR}/bin_refinement/${treatment}/${sample_name}/dastool_DASTool_bins:DAS Tool refined bins"
     )
     
     for source_info in "${sources[@]}"; do
