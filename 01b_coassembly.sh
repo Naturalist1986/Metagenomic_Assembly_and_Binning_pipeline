@@ -251,18 +251,30 @@ stage_coassembly() {
     if [ $exit_code -eq 0 ] && [ -f "${coassembly_dir}/contigs.fasta" ]; then
         # Create symlink for compatibility
         ln -sf "${coassembly_dir}/contigs.fasta" "${coassembly_dir}/final_assembly.fasta"
-        
+
         # Log assembly statistics
         log_coassembly_stats "$treatment" "$coassembly_dir"
-        
+
         # Clean up SPAdes intermediate files
         log "Cleaning up intermediate files..."
         rm -rf "${coassembly_dir}/corrected" "${coassembly_dir}/misc" "${coassembly_dir}/tmp"
         rm -rf "${coassembly_dir}/K21" "${coassembly_dir}/K33" "${coassembly_dir}/K55"
-        
-        # Clean up concatenated files
-        rm -f "$concat_r1" "$concat_r2" "$concat_singletons"
-        
+
+        # Save merged reads for downstream use (bin reassembly, etc.)
+        local merged_reads_dir="${coassembly_dir}/merged_reads"
+        mkdir -p "$merged_reads_dir"
+
+        log "Saving merged reads for treatment $treatment..."
+        mv "$concat_r1" "${merged_reads_dir}/merged_R1.fastq.gz"
+        mv "$concat_r2" "${merged_reads_dir}/merged_R2.fastq.gz"
+
+        if [ -f "$concat_singletons" ] && [ -s "$concat_singletons" ]; then
+            mv "$concat_singletons" "${merged_reads_dir}/merged_singletons.fastq.gz"
+            log "  Saved merged reads: R1, R2, and singletons"
+        else
+            log "  Saved merged reads: R1 and R2"
+        fi
+
         log "Co-assembly successful for treatment: $treatment"
         return 0
     else

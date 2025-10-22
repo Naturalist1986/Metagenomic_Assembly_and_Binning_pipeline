@@ -333,6 +333,56 @@ get_refined_bins_dir() {
     return 1
 }
 
+# Function to get appropriate reads based on bin location (treatment-level vs sample-level)
+get_reads_for_reassembly() {
+    local sample_name="$1"
+    local treatment="$2"
+    local refined_bins_dir="$3"
+
+    log "Determining appropriate reads for reassembly..."
+
+    # Check if bins are at treatment level (coassembly bins)
+    if [[ "$refined_bins_dir" == *"/${treatment}/dastool_DASTool_bins" ]] && [[ "$refined_bins_dir" != *"/${treatment}/${sample_name}/"* ]]; then
+        # Treatment-level bins - use merged reads from coassembly
+        local merged_reads_dir="${OUTPUT_DIR}/coassembly/${treatment}/merged_reads"
+
+        if [ -d "$merged_reads_dir" ]; then
+            local read1="${merged_reads_dir}/merged_R1.fastq.gz"
+            local read2="${merged_reads_dir}/merged_R2.fastq.gz"
+            local singletons="${merged_reads_dir}/merged_singletons.fastq.gz"
+
+            if [ -f "$read1" ] && [ -f "$read2" ]; then
+                log "  Using treatment-level merged reads from coassembly"
+                log "    R1: $read1"
+                log "    R2: $read2"
+                echo "$read1|$read2|$singletons|treatment-level"
+                return 0
+            else
+                log "  ERROR: Merged reads not found at: $merged_reads_dir"
+            fi
+        else
+            log "  ERROR: Merged reads directory not found: $merged_reads_dir"
+        fi
+    fi
+
+    # Sample-level bins or fallback - use individual sample reads
+    local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample_name}"
+    local read1="${quality_dir}/filtered_1.fastq.gz"
+    local read2="${quality_dir}/filtered_2.fastq.gz"
+    local singletons="${quality_dir}/singletons.fastq.gz"
+
+    if [ -f "$read1" ] && [ -f "$read2" ]; then
+        log "  Using sample-level reads"
+        log "    R1: $read1"
+        log "    R2: $read2"
+        echo "$read1|$read2|$singletons|sample-level"
+        return 0
+    else
+        log "  ERROR: Sample reads not found for $sample_name"
+        return 1
+    fi
+}
+
 # Main processing function
 stage_bin_reassembly() {
     local sample_name="$1"
@@ -341,7 +391,6 @@ stage_bin_reassembly() {
     log "Running bin reassembly for $sample_name ($treatment)"
 
     local output_dir="${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}"
-    local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample_name}"
 
     mkdir -p "$output_dir"
 
@@ -357,17 +406,18 @@ stage_bin_reassembly() {
         log "ERROR: No refined bins found for $sample_name"
         return 1
     fi
-    
-    # Check for reads
-    local read1="${quality_dir}/filtered_1.fastq.gz"
-    local read2="${quality_dir}/filtered_2.fastq.gz"
-    local singletons="${quality_dir}/singletons.fastq.gz"
-    
-    if [ ! -f "$read1" ] || [ ! -f "$read2" ]; then
-        log "ERROR: Missing quality-filtered reads for $sample_name"
-        log "  Expected: $read1 and $read2"
+
+    # Get appropriate reads based on bin location (treatment vs sample level)
+    local reads_info=$(get_reads_for_reassembly "$sample_name" "$treatment" "$refined_bins_dir")
+    if [ $? -ne 0 ] || [ -z "$reads_info" ]; then
+        log "ERROR: Could not find appropriate reads for reassembly"
         return 1
     fi
+
+    # Parse reads information
+    IFS='|' read -r read1 read2 singletons reads_level <<< "$reads_info"
+
+    log "Using $reads_level reads for bin reassembly"
     
     # Count bins to reassemble
     local bin_count=$(ls -1 "$refined_bins_dir"/*.fa 2>/dev/null | wc -l)
