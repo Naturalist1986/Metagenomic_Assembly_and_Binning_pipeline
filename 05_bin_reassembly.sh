@@ -302,30 +302,59 @@ run_manual_reassembly() {
     fi
 }
 
+# Function to find refined bins (handles both treatment-level and sample-level)
+get_refined_bins_dir() {
+    local sample_name="$1"
+    local treatment="$2"
+
+    log "Locating refined bins for $sample_name ($treatment)..."
+
+    # Check treatment-level bins first (for coassembly/treatment-level binning)
+    local treatment_bins="${OUTPUT_DIR}/bin_refinement/${treatment}/dastool_DASTool_bins"
+    if [ -d "$treatment_bins" ] && [ "$(ls -A "$treatment_bins"/*.fa 2>/dev/null)" ]; then
+        local bin_count=$(ls -1 "$treatment_bins"/*.fa 2>/dev/null | wc -l)
+        log "  Found $bin_count treatment-level refined bins at: $treatment_bins"
+        echo "$treatment_bins"
+        return 0
+    fi
+
+    # Check sample-level bins (for individual sample binning)
+    local sample_bins="${OUTPUT_DIR}/bin_refinement/${treatment}/${sample_name}/dastool_DASTool_bins"
+    if [ -d "$sample_bins" ] && [ "$(ls -A "$sample_bins"/*.fa 2>/dev/null)" ]; then
+        local bin_count=$(ls -1 "$sample_bins"/*.fa 2>/dev/null | wc -l)
+        log "  Found $bin_count sample-level refined bins at: $sample_bins"
+        echo "$sample_bins"
+        return 0
+    fi
+
+    log "  ERROR: No refined bins found at either location:"
+    log "    Treatment-level: $treatment_bins"
+    log "    Sample-level: $sample_bins"
+    return 1
+}
+
 # Main processing function
 stage_bin_reassembly() {
     local sample_name="$1"
     local treatment="$2"
-    
+
     log "Running bin reassembly for $sample_name ($treatment)"
-    
-    local refinement_dir="${OUTPUT_DIR}/bin_refinement/${treatment}/${sample_name}"
+
     local output_dir="${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}"
     local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample_name}"
-    
+
     mkdir -p "$output_dir"
-    
+
     # Check if already processed
     if [ -d "${output_dir}/reassembled_bins" ] && [ "$(ls -A "${output_dir}/reassembled_bins/"*.fa 2>/dev/null)" ]; then
         log "Sample $sample_name already reassembled, skipping..."
         return 0
     fi
-    
-    # Check for refined bins (from DAS Tool stage 04)
-    local refined_bins_dir="${refinement_dir}/dastool_DASTool_bins"
-    if [ ! -d "$refined_bins_dir" ] || [ ! "$(ls -A "$refined_bins_dir"/*.fa 2>/dev/null)" ]; then
+
+    # Find refined bins (from DAS Tool stage 04) - handles both treatment and sample level
+    local refined_bins_dir=$(get_refined_bins_dir "$sample_name" "$treatment")
+    if [ $? -ne 0 ] || [ -z "$refined_bins_dir" ]; then
         log "ERROR: No refined bins found for $sample_name"
-        log "  Expected: $refined_bins_dir"
         return 1
     fi
     

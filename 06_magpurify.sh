@@ -189,29 +189,58 @@ run_magpurify_on_bin() {
     fi
 }
 
+# Function to find reassembled bins (handles both treatment-level and sample-level)
+get_reassembled_bins_dir() {
+    local sample_name="$1"
+    local treatment="$2"
+
+    log "Locating reassembled bins for $sample_name ($treatment)..."
+
+    # Check treatment-level bins first (for coassembly/treatment-level binning)
+    local treatment_bins="${OUTPUT_DIR}/reassembly/${treatment}/reassembled_bins"
+    if [ -d "$treatment_bins" ] && [ "$(ls -A "$treatment_bins"/*.fa 2>/dev/null)" ]; then
+        local bin_count=$(ls -1 "$treatment_bins"/*.fa 2>/dev/null | wc -l)
+        log "  Found $bin_count treatment-level reassembled bins at: $treatment_bins"
+        echo "$treatment_bins"
+        return 0
+    fi
+
+    # Check sample-level bins (for individual sample binning)
+    local sample_bins="${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}/reassembled_bins"
+    if [ -d "$sample_bins" ] && [ "$(ls -A "$sample_bins"/*.fa 2>/dev/null)" ]; then
+        local bin_count=$(ls -1 "$sample_bins"/*.fa 2>/dev/null | wc -l)
+        log "  Found $bin_count sample-level reassembled bins at: $sample_bins"
+        echo "$sample_bins"
+        return 0
+    fi
+
+    log "  ERROR: No reassembled bins found at either location:"
+    log "    Treatment-level: $treatment_bins"
+    log "    Sample-level: $sample_bins"
+    return 1
+}
+
 # Main processing function
 stage_magpurify() {
     local sample_name="$1"
     local treatment="$2"
-    
+
     log "Running MAGpurify for $sample_name ($treatment)"
-    
-    local reassembly_dir="${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}"
+
     local output_dir="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}"
-    
+
     mkdir -p "${output_dir}/purified_bins"
-    
+
     # Check if already processed
     if [ -f "${output_dir}/magpurify_complete.flag" ]; then
         log "Sample $sample_name already processed, skipping..."
         return 0
     fi
-    
-    # Check for input bins
-    local input_bins_dir="${reassembly_dir}/reassembled_bins"
-    if [ ! -d "$input_bins_dir" ] || [ ! "$(ls -A "$input_bins_dir"/*.fa 2>/dev/null)" ]; then
+
+    # Find reassembled bins - handles both treatment and sample level
+    local input_bins_dir=$(get_reassembled_bins_dir "$sample_name" "$treatment")
+    if [ $? -ne 0 ] || [ -z "$input_bins_dir" ]; then
         log "ERROR: No reassembled bins found for $sample_name"
-        log "  Expected: $input_bins_dir"
         return 1
     fi
     

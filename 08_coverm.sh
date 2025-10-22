@@ -90,33 +90,50 @@ validate_bins_for_coverm() {
     return 0
 }
 
-# Function to determine best available bins
+# Function to determine best available bins (handles both treatment-level and sample-level)
 get_best_bins_source() {
     local sample_name="$1"
     local treatment="$2"
-    
+
     log "Determining best available bins source for $sample_name..."
-    
+
     # Priority order: MAGpurify > Reassembly > Refinement (DAS Tool bins)
-    local sources=(
-        "${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins:MAGpurify purified bins"
-        "${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}/reassembled_bins:Reassembled bins"
-        "${OUTPUT_DIR}/bin_refinement/${treatment}/${sample_name}/dastool_DASTool_bins:DAS Tool refined bins"
+    # For each source, check treatment-level first, then sample-level
+    local source_types=(
+        "magpurify/purified_bins:MAGpurify purified bins"
+        "reassembly/reassembled_bins:Reassembled bins"
+        "bin_refinement/dastool_DASTool_bins:DAS Tool refined bins"
     )
-    
-    for source_info in "${sources[@]}"; do
-        IFS=':' read -r bins_dir source_name <<< "$source_info"
-        
-        if [ -d "$bins_dir" ] && [ "$(ls -A "$bins_dir"/*.fa 2>/dev/null)" ]; then
-            local bin_count=$(ls -1 "$bins_dir"/*.fa 2>/dev/null | wc -l)
-            log "  Found $bin_count bins from: $source_name"
-            log "  Using bins from: $bins_dir"
-            echo "$bins_dir|$source_name"
+
+    for source_info in "${source_types[@]}"; do
+        IFS=':' read -r source_subpath source_name <<< "$source_info"
+
+        # Extract the base directory and subdirectory from source_subpath
+        local base_dir=$(dirname "$source_subpath")
+        local subdir=$(basename "$source_subpath")
+
+        # Check treatment-level bins first
+        local treatment_bins="${OUTPUT_DIR}/${base_dir}/${treatment}/${subdir}"
+        if [ -d "$treatment_bins" ] && [ "$(ls -A "$treatment_bins"/*.fa 2>/dev/null)" ]; then
+            local bin_count=$(ls -1 "$treatment_bins"/*.fa 2>/dev/null | wc -l)
+            log "  Found $bin_count bins from: $source_name (treatment-level)"
+            log "  Using bins from: $treatment_bins"
+            echo "$treatment_bins|$source_name (treatment-level)"
+            return 0
+        fi
+
+        # Check sample-level bins
+        local sample_bins="${OUTPUT_DIR}/${base_dir}/${treatment}/${sample_name}/${subdir}"
+        if [ -d "$sample_bins" ] && [ "$(ls -A "$sample_bins"/*.fa 2>/dev/null)" ]; then
+            local bin_count=$(ls -1 "$sample_bins"/*.fa 2>/dev/null | wc -l)
+            log "  Found $bin_count bins from: $source_name (sample-level)"
+            log "  Using bins from: $sample_bins"
+            echo "$sample_bins|$source_name (sample-level)"
             return 0
         fi
     done
-    
-    log "ERROR: No bins found for $sample_name"
+
+    log "ERROR: No bins found for $sample_name at either treatment or sample level"
     return 1
 }
 

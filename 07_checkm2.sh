@@ -252,31 +252,60 @@ EOF
     return 0
 }
 
+# Function to find MAGpurify directory (handles both treatment-level and sample-level)
+get_magpurify_dir() {
+    local sample_name="$1"
+    local treatment="$2"
+
+    log "Locating MAGpurify directory for $sample_name ($treatment)..."
+
+    # Check treatment-level directory first (for coassembly/treatment-level binning)
+    local treatment_dir="${OUTPUT_DIR}/magpurify/${treatment}"
+    if [ -d "$treatment_dir" ] && [ -d "${treatment_dir}/purified_bins" ]; then
+        log "  Found treatment-level MAGpurify directory at: $treatment_dir"
+        echo "$treatment_dir"
+        return 0
+    fi
+
+    # Check sample-level directory (for individual sample binning)
+    local sample_dir="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}"
+    if [ -d "$sample_dir" ]; then
+        log "  Found sample-level MAGpurify directory at: $sample_dir"
+        echo "$sample_dir"
+        return 0
+    fi
+
+    log "  ERROR: No MAGpurify directory found at either location:"
+    log "    Treatment-level: $treatment_dir"
+    log "    Sample-level: $sample_dir"
+    return 1
+}
+
 # Main processing function
 stage_checkm2_analysis() {
     local sample_name="$1"
     local treatment="$2"
-    
+
     log "Running CheckM2 quality assessment for $sample_name ($treatment)"
-    
-    local magpurify_dir="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}"
+
     local output_dir="${OUTPUT_DIR}/checkm2/${treatment}/${sample_name}"
     local temp_bins_dir="${SHORT_TEMP_DIR}/bins"
-    
+
     mkdir -p "$output_dir"
-    
+
     # Check if already processed
     if [ -f "${output_dir}/quality_report.tsv" ]; then
         log "Sample $sample_name already analyzed, skipping..."
         return 0
     fi
-    
-    # Validate input directory exists
-    if [ ! -d "$magpurify_dir" ]; then
-        log "ERROR: MAGpurify directory not found for $sample_name: $magpurify_dir"
+
+    # Find MAGpurify directory - handles both treatment and sample level
+    local magpurify_dir=$(get_magpurify_dir "$sample_name" "$treatment")
+    if [ $? -ne 0 ] || [ -z "$magpurify_dir" ]; then
+        log "ERROR: MAGpurify directory not found for $sample_name"
         return 1
     fi
-    
+
     # Prepare bins for CheckM2
     if ! prepare_bins_for_checkm2 "$sample_name" "$treatment" "$magpurify_dir" "$temp_bins_dir"; then
         log "ERROR: No valid bins found for CheckM2 analysis"
