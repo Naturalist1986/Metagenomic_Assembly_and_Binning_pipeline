@@ -262,52 +262,76 @@ stage_metawrap_quant() {
 
     log "Using assembly: $assembly_file"
 
-    # MetaWRAP quant_bins requires reads in *_1.fastq and *_2.fastq format
-    # Create symbolic links with correct naming in temp directory
-    local reads_temp_dir="${TEMP_DIR}/reads_links"
+    # MetaWRAP quant_bins requires reads in *_1.fastq and *_2.fastq format (uncompressed)
+    # Need to uncompress if files are gzipped
+    local reads_temp_dir="${TEMP_DIR}/reads_uncompressed"
     mkdir -p "$reads_temp_dir"
 
     local base_name="reads"
-    local link_r1="${reads_temp_dir}/${base_name}_1.fastq"
-    local link_r2="${reads_temp_dir}/${base_name}_2.fastq"
+    local final_r1="${reads_temp_dir}/${base_name}_1.fastq"
+    local final_r2="${reads_temp_dir}/${base_name}_2.fastq"
 
-    # Handle .gz extension - MetaWRAP can handle gzipped files if named correctly
+    # Check if files are gzipped and uncompress if needed
     if [[ "$r1" =~ \.gz$ ]]; then
-        link_r1="${link_r1}.gz"
-        link_r2="${link_r2}.gz"
+        log "Uncompressing reads for MetaWRAP quant_bins (required format)..."
+        log "  Uncompressing R1: $r1 -> $final_r1"
+        gunzip -c "$r1" > "$final_r1" &
+        local pid_r1=$!
+
+        log "  Uncompressing R2: $r2 -> $final_r2"
+        gunzip -c "$r2" > "$final_r2" &
+        local pid_r2=$!
+
+        # Wait for both decompressions to complete
+        wait $pid_r1
+        if [ $? -ne 0 ]; then
+            log "ERROR: Failed to uncompress R1 reads"
+            rm -rf "$reads_temp_dir"
+            conda deactivate
+            return 1
+        fi
+
+        wait $pid_r2
+        if [ $? -ne 0 ]; then
+            log "ERROR: Failed to uncompress R2 reads"
+            rm -rf "$reads_temp_dir"
+            conda deactivate
+            return 1
+        fi
+
+        log "  Decompression complete"
+    else
+        # Files are already uncompressed, create symlinks
+        log "Creating symlinks for uncompressed reads..."
+        ln -sf "$r1" "$final_r1"
+        ln -sf "$r2" "$final_r2"
     fi
 
-    log "Creating symbolic links for MetaWRAP quant_bins..."
-    log "  $r1 -> $link_r1"
-    log "  $r2 -> $link_r2"
-
-    ln -sf "$r1" "$link_r1"
-    ln -sf "$r2" "$link_r2"
-
-    # Verify symlinks were created
-    if [ ! -L "$link_r1" ] || [ ! -L "$link_r2" ]; then
-        log "ERROR: Failed to create symbolic links for reads"
+    # Verify files exist
+    if [ ! -f "$final_r1" ] || [ ! -f "$final_r2" ]; then
+        log "ERROR: Failed to prepare reads for MetaWRAP quant_bins"
+        rm -rf "$reads_temp_dir"
         conda deactivate
         return 1
     fi
 
-    # Run MetaWRAP quant_bins with symlinked reads
+    # Run MetaWRAP quant_bins with uncompressed reads
     log "Running MetaWRAP quant_bins..."
-    log "Command: metawrap quant_bins -b $bins_dir -o $output_dir -a $assembly_file -t $SLURM_CPUS_PER_TASK $link_r1 $link_r2"
+    log "Command: metawrap quant_bins -b $bins_dir -o $output_dir -a $assembly_file -t $SLURM_CPUS_PER_TASK $final_r1 $final_r2"
 
     metawrap quant_bins \
         -b "$bins_dir" \
         -o "$output_dir" \
         -a "$assembly_file" \
         -t $SLURM_CPUS_PER_TASK \
-        "$link_r1" "$link_r2" \
+        "$final_r1" "$final_r2" \
         2>&1 | tee "${LOG_DIR}/${treatment}/$([ -n "$sample_name" ] && echo "${sample_name}_" || echo "")metawrap_quant.log"
 
     local exit_code=${PIPESTATUS[0]}
 
-    # Cleanup symlinks
-    rm -f "$link_r1" "$link_r2"
-    rmdir "$reads_temp_dir" 2>/dev/null
+    # Cleanup temporary uncompressed reads
+    log "Cleaning up temporary decompressed reads..."
+    rm -rf "$reads_temp_dir"
 
     conda deactivate
 
