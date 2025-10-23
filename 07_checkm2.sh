@@ -17,45 +17,93 @@ else
     source "${SCRIPT_DIR}/00_config_utilities.sh"
 fi
 
-# Get sample info from array task ID
-SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)
-if [ -z "$SAMPLE_INFO" ]; then
-    log "No sample found for array index $SLURM_ARRAY_TASK_ID"
-    exit 0
-fi
+# Determine processing mode: treatment-level or sample-level
+if [ "${TREATMENT_LEVEL_BINNING:-false}" = "true" ]; then
+    # Treatment-level mode: array index maps to treatment
+    ARRAY_INDEX=${SLURM_ARRAY_TASK_ID:-0}
 
-# Parse sample information
-IFS='|' read -r SAMPLE_NAME TREATMENT _ _ <<< "$SAMPLE_INFO"
-export SAMPLE_NAME TREATMENT
+    # Check if treatments file exists
+    if [ ! -f "$TREATMENTS_FILE" ]; then
+        log "ERROR: Treatments file not found: $TREATMENTS_FILE"
+        exit 1
+    fi
 
-# Initialize
-init_conda
-create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
+    # Get treatment from treatments file
+    TREATMENT=$(sed -n "$((ARRAY_INDEX + 1))p" "$TREATMENTS_FILE" 2>/dev/null | tr -d '\r\n' | xargs)
 
-# Create a shorter temporary directory to avoid AF_UNIX path length issues
-SHORT_TEMP_DIR="/tmp/checkm2_${SAMPLE_NAME}_$$"
-mkdir -p "$SHORT_TEMP_DIR"
+    if [ -z "$TREATMENT" ]; then
+        log "No treatment found for array index $ARRAY_INDEX"
+        exit 0
+    fi
 
-log "====== Starting CheckM2 Quality Assessment for $SAMPLE_NAME ($TREATMENT) ======"
+    export TREATMENT
+    PROCESSING_MODE="treatment-level"
 
-# Check if stage already completed
-if check_sample_checkpoint "$SAMPLE_NAME" "checkm2"; then
-    log "CheckM2 analysis already completed for $SAMPLE_NAME"
-    rm -rf "$SHORT_TEMP_DIR"
-    exit 0
+    # Initialize for treatment-level
+    init_conda
+    create_treatment_dirs "$TREATMENT"
+
+    # Create a shorter temporary directory to avoid AF_UNIX path length issues
+    SHORT_TEMP_DIR="/tmp/checkm2_${TREATMENT}_$$"
+    mkdir -p "$SHORT_TEMP_DIR"
+
+    log "====== Starting CheckM2 Quality Assessment for treatment $TREATMENT (treatment-level mode) ======"
+
+    # Check if stage already completed for treatment
+    if check_treatment_checkpoint "$TREATMENT" "checkm2"; then
+        log "CheckM2 analysis already completed for treatment $TREATMENT"
+        rm -rf "$SHORT_TEMP_DIR"
+        exit 0
+    fi
+
+else
+    # Sample-level mode: array index maps to sample (original behavior)
+    SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)
+    if [ -z "$SAMPLE_INFO" ]; then
+        log "No sample found for array index $SLURM_ARRAY_TASK_ID"
+        exit 0
+    fi
+
+    # Parse sample information
+    IFS='|' read -r SAMPLE_NAME TREATMENT _ _ <<< "$SAMPLE_INFO"
+    export SAMPLE_NAME TREATMENT
+    PROCESSING_MODE="sample-level"
+
+    # Initialize for sample-level
+    init_conda
+    create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
+
+    # Create a shorter temporary directory to avoid AF_UNIX path length issues
+    SHORT_TEMP_DIR="/tmp/checkm2_${SAMPLE_NAME}_$$"
+    mkdir -p "$SHORT_TEMP_DIR"
+
+    log "====== Starting CheckM2 Quality Assessment for $SAMPLE_NAME ($TREATMENT) ======"
+
+    # Check if stage already completed for sample
+    if check_sample_checkpoint "$SAMPLE_NAME" "checkm2"; then
+        log "CheckM2 analysis already completed for $SAMPLE_NAME"
+        rm -rf "$SHORT_TEMP_DIR"
+        exit 0
+    fi
 fi
 
 # Function to prepare bins for CheckM2
 prepare_bins_for_checkm2() {
-    local sample_name="$1"
-    local treatment="$2"
-    local magpurify_dir="$3"
-    local temp_bins_dir="$4"
-    
-    log "Preparing bins for CheckM2 analysis..."
-    
+    local treatment="$1"
+    local magpurify_dir="$2"
+    local temp_bins_dir="$3"
+    local sample_name="${4:-}"  # Optional
+
+    if [ -n "$sample_name" ]; then
+        local entity_desc="sample $sample_name"
+    else
+        local entity_desc="treatment $treatment"
+    fi
+
+    log "Preparing bins for CheckM2 analysis for $entity_desc..."
+
     mkdir -p "$temp_bins_dir"
-    
+
     local bins_prepared=0
     local bins_skipped=0
     
@@ -122,12 +170,18 @@ prepare_bins_for_checkm2() {
 
 # Function to run CheckM2 analysis
 run_checkm2_analysis() {
-    local sample_name="$1"
-    local treatment="$2"
-    local temp_bins_dir="$3"
-    local output_dir="$4"
-    
-    log "Running CheckM2 analysis for $sample_name..."
+    local treatment="$1"
+    local temp_bins_dir="$2"
+    local output_dir="$3"
+    local sample_name="${4:-}"  # Optional
+
+    if [ -n "$sample_name" ]; then
+        local entity_desc="sample $sample_name"
+    else
+        local entity_desc="treatment $treatment"
+    fi
+
+    log "Running CheckM2 analysis for $entity_desc..."
     
     # Activate CheckM2 environment
     activate_env checkm
@@ -185,12 +239,20 @@ run_checkm2_analysis() {
 
 # Function to create CheckM2 summary
 create_checkm2_summary() {
-    local sample_name="$1"
-    local treatment="$2"
-    local output_dir="$3"
+    local treatment="$1"
+    local output_dir="$2"
+    local sample_name="${3:-}"  # Optional
     local summary_file="${output_dir}/checkm2_summary.txt"
-    
-    log "Creating CheckM2 summary for $sample_name..."
+
+    if [ -n "$sample_name" ]; then
+        local entity_desc="sample $sample_name"
+        local entity_title="$sample_name"
+    else
+        local entity_desc="treatment $treatment"
+        local entity_title="Treatment $treatment"
+    fi
+
+    log "Creating CheckM2 summary for $entity_desc..."
     
     if [ ! -f "${output_dir}/quality_report.tsv" ]; then
         log "WARNING: CheckM2 quality report not found"
@@ -198,12 +260,12 @@ create_checkm2_summary() {
     fi
     
     cat > "$summary_file" << EOF
-CheckM2 Quality Assessment Summary for $sample_name
+CheckM2 Quality Assessment Summary for $entity_title
 =================================================
 
 Date: $(date)
-Sample: $sample_name
 Treatment: $treatment
+$([ -n "$sample_name" ] && echo "Sample: $sample_name")
 
 Bin Quality Assessment:
 EOF
@@ -254,10 +316,16 @@ EOF
 
 # Function to find MAGpurify directory (handles both treatment-level and sample-level)
 get_magpurify_dir() {
-    local sample_name="$1"
-    local treatment="$2"
+    local treatment="$1"
+    local sample_name="${2:-}"  # Optional
 
-    log "Locating MAGpurify directory for $sample_name ($treatment)..."
+    if [ -n "$sample_name" ]; then
+        local entity_desc="sample $sample_name ($treatment)"
+    else
+        local entity_desc="treatment $treatment"
+    fi
+
+    log "Locating MAGpurify directory for $entity_desc..."
 
     # Check treatment-level directory first (for coassembly/treatment-level binning)
     local treatment_dir="${OUTPUT_DIR}/magpurify/${treatment}"
@@ -268,69 +336,93 @@ get_magpurify_dir() {
     fi
 
     # Check sample-level directory (for individual sample binning)
-    local sample_dir="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}"
-    if [ -d "$sample_dir" ]; then
-        log "  Found sample-level MAGpurify directory at: $sample_dir"
-        echo "$sample_dir"
-        return 0
+    if [ -n "$sample_name" ]; then
+        local sample_dir="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}"
+        if [ -d "$sample_dir" ]; then
+            log "  Found sample-level MAGpurify directory at: $sample_dir"
+            echo "$sample_dir"
+            return 0
+        fi
+
+        log "  ERROR: No MAGpurify directory found at either location:"
+        log "    Treatment-level: $treatment_dir"
+        log "    Sample-level: $sample_dir"
+    else
+        log "  ERROR: No MAGpurify directory found at: $treatment_dir"
     fi
 
-    log "  ERROR: No MAGpurify directory found at either location:"
-    log "    Treatment-level: $treatment_dir"
-    log "    Sample-level: $sample_dir"
     return 1
 }
 
 # Main processing function
 stage_checkm2_analysis() {
-    local sample_name="$1"
-    local treatment="$2"
+    local treatment="$1"
+    local sample_name="${2:-}"  # Optional for treatment-level mode
 
-    log "Running CheckM2 quality assessment for $sample_name ($treatment)"
+    if [ -n "$sample_name" ]; then
+        # Sample-level mode
+        log "Running CheckM2 quality assessment for $sample_name ($treatment)"
+        local output_dir="${OUTPUT_DIR}/checkm2/${treatment}/${sample_name}"
+        local entity_desc="sample $sample_name"
+    else
+        # Treatment-level mode
+        log "Running CheckM2 quality assessment for treatment $treatment (all bins)"
+        local output_dir="${OUTPUT_DIR}/checkm2/${treatment}"
+        local entity_desc="treatment $treatment"
+    fi
 
-    local output_dir="${OUTPUT_DIR}/checkm2/${treatment}/${sample_name}"
     local temp_bins_dir="${SHORT_TEMP_DIR}/bins"
 
     mkdir -p "$output_dir"
 
     # Check if already processed
     if [ -f "${output_dir}/quality_report.tsv" ]; then
-        log "Sample $sample_name already analyzed, skipping..."
+        log "CheckM2 already analyzed for $entity_desc, skipping..."
         return 0
     fi
 
     # Find MAGpurify directory - handles both treatment and sample level
-    local magpurify_dir=$(get_magpurify_dir "$sample_name" "$treatment")
+    if [ -n "$sample_name" ]; then
+        local magpurify_dir=$(get_magpurify_dir "$treatment" "$sample_name")
+    else
+        local magpurify_dir=$(get_magpurify_dir "$treatment")
+    fi
+
     if [ $? -ne 0 ] || [ -z "$magpurify_dir" ]; then
-        log "ERROR: MAGpurify directory not found for $sample_name"
+        log "ERROR: MAGpurify directory not found for $entity_desc"
         return 1
     fi
 
     # Prepare bins for CheckM2
-    if ! prepare_bins_for_checkm2 "$sample_name" "$treatment" "$magpurify_dir" "$temp_bins_dir"; then
+    if ! prepare_bins_for_checkm2 "$treatment" "$magpurify_dir" "$temp_bins_dir" "$sample_name"; then
         log "ERROR: No valid bins found for CheckM2 analysis"
         return 1
     fi
-    
+
     # Run CheckM2 analysis
-    if run_checkm2_analysis "$sample_name" "$treatment" "$temp_bins_dir" "$output_dir"; then
+    if run_checkm2_analysis "$treatment" "$temp_bins_dir" "$output_dir" "$sample_name"; then
         log "CheckM2 analysis completed successfully"
-        
+
         # Create summary
-        create_checkm2_summary "$sample_name" "$treatment" "$output_dir"
+        create_checkm2_summary "$treatment" "$output_dir" "$sample_name"
         
         return 0
     else
-        log "ERROR: CheckM2 analysis failed for $sample_name"
+        log "ERROR: CheckM2 analysis failed for $entity_desc"
         return 1
     fi
 }
 
 # Validation function
 validate_checkm2_analysis() {
-    local sample_name="$1"
-    local treatment="$2"
-    local output_dir="${OUTPUT_DIR}/checkm2/${treatment}/${sample_name}"
+    local treatment="$1"
+    local sample_name="${2:-}"
+
+    if [ -n "$sample_name" ]; then
+        local output_dir="${OUTPUT_DIR}/checkm2/${treatment}/${sample_name}"
+    else
+        local output_dir="${OUTPUT_DIR}/checkm2/${treatment}"
+    fi
     
     # Check if CheckM2 output exists and is valid
     if [ -f "${output_dir}/quality_report.tsv" ] && [ -s "${output_dir}/quality_report.tsv" ]; then
@@ -345,21 +437,42 @@ validate_checkm2_analysis() {
     return 1
 }
 
-# Run the CheckM2 analysis stage
-if stage_checkm2_analysis "$SAMPLE_NAME" "$TREATMENT"; then
-    # Validate results
-    if validate_checkm2_analysis "$SAMPLE_NAME" "$TREATMENT"; then
-        create_sample_checkpoint "$SAMPLE_NAME" "checkm2"
-        log "====== CheckM2 analysis completed successfully for $SAMPLE_NAME ======"
+# Run the CheckM2 analysis stage based on processing mode
+if [ "$PROCESSING_MODE" = "treatment-level" ]; then
+    # Treatment-level mode: run once for all bins in treatment
+    if stage_checkm2_analysis "$TREATMENT"; then
+        # Validate results
+        if validate_checkm2_analysis "$TREATMENT"; then
+            create_treatment_checkpoint "$TREATMENT" "checkm2"
+            log "====== CheckM2 analysis completed successfully for treatment $TREATMENT ======"
+        else
+            log "ERROR: CheckM2 validation failed for treatment $TREATMENT"
+            rm -rf "$SHORT_TEMP_DIR"
+            exit 1
+        fi
     else
-        log "ERROR: CheckM2 validation failed for $SAMPLE_NAME"
+        log "ERROR: CheckM2 stage failed for treatment $TREATMENT"
         rm -rf "$SHORT_TEMP_DIR"
         exit 1
     fi
+
 else
-    log "ERROR: CheckM2 stage failed for $SAMPLE_NAME"
-    rm -rf "$SHORT_TEMP_DIR"
-    exit 1
+    # Sample-level mode: run for individual sample
+    if stage_checkm2_analysis "$TREATMENT" "$SAMPLE_NAME"; then
+        # Validate results
+        if validate_checkm2_analysis "$TREATMENT" "$SAMPLE_NAME"; then
+            create_sample_checkpoint "$SAMPLE_NAME" "checkm2"
+            log "====== CheckM2 analysis completed successfully for $SAMPLE_NAME ======"
+        else
+            log "ERROR: CheckM2 validation failed for $SAMPLE_NAME"
+            rm -rf "$SHORT_TEMP_DIR"
+            exit 1
+        fi
+    else
+        log "ERROR: CheckM2 stage failed for $SAMPLE_NAME"
+        rm -rf "$SHORT_TEMP_DIR"
+        exit 1
+    fi
 fi
 
 # Cleanup
