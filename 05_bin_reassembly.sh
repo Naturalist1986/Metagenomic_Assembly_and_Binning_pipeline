@@ -17,29 +17,62 @@ else
     source "${SCRIPT_DIR}/00_config_utilities.sh"
 fi
 
-# Get sample info from array task ID
-SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)
-if [ -z "$SAMPLE_INFO" ]; then
-    log "No sample found for array index $SLURM_ARRAY_TASK_ID"
-    exit 0
-fi
+# Determine if this should run at treatment or sample level
+if [ "${TREATMENT_LEVEL_BINNING:-false}" = "true" ]; then
+    # Treatment-level mode - array index maps to treatment
+    ARRAY_INDEX=${SLURM_ARRAY_TASK_ID:-0}
+    TREATMENT=$(sed -n "$((ARRAY_INDEX + 1))p" "$TREATMENTS_FILE" 2>/dev/null | tr -d '\r\n' | xargs)
 
-# Parse sample information
-IFS='|' read -r SAMPLE_NAME TREATMENT _ _ <<< "$SAMPLE_INFO"
-export SAMPLE_NAME TREATMENT
+    if [ -z "$TREATMENT" ]; then
+        echo "ERROR: No treatment found at index $ARRAY_INDEX" >&2
+        exit 1
+    fi
+
+    export TREATMENT
+    PROCESSING_MODE="treatment-level"
+    log "Processing treatment-level bin reassembly for: $TREATMENT"
+else
+    # Sample-level mode - array index maps to sample
+    SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)
+    if [ -z "$SAMPLE_INFO" ]; then
+        log "No sample found for array index $SLURM_ARRAY_TASK_ID"
+        exit 0
+    fi
+
+    IFS='|' read -r SAMPLE_NAME TREATMENT _ _ <<< "$SAMPLE_INFO"
+    export SAMPLE_NAME TREATMENT
+    PROCESSING_MODE="sample-level"
+    log "Processing sample-level bin reassembly for: $SAMPLE_NAME ($TREATMENT)"
+fi
 
 # Initialize
 init_conda
-create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
+if [ "$PROCESSING_MODE" = "treatment-level" ]; then
+    create_treatment_dirs "$TREATMENT"
+else
+    create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
+fi
 TEMP_DIR=$(setup_temp_dir)
 
-log "====== Starting Bin Reassembly for $SAMPLE_NAME ($TREATMENT) ======"
+if [ "$PROCESSING_MODE" = "treatment-level" ]; then
+    log "====== Starting Treatment-Level Bin Reassembly for $TREATMENT ======"
+else
+    log "====== Starting Bin Reassembly for $SAMPLE_NAME ($TREATMENT) ======"
+fi
 
 # Check if stage already completed
-if check_sample_checkpoint "$SAMPLE_NAME" "bin_reassembly"; then
-    log "Bin reassembly already completed for $SAMPLE_NAME"
-    cleanup_temp_dir "$TEMP_DIR"
-    exit 0
+if [ "$PROCESSING_MODE" = "treatment-level" ]; then
+    if check_treatment_checkpoint "$TREATMENT" "bin_reassembly"; then
+        log "Bin reassembly already completed for treatment $TREATMENT"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 0
+    fi
+else
+    if check_sample_checkpoint "$SAMPLE_NAME" "bin_reassembly"; then
+        log "Bin reassembly already completed for $SAMPLE_NAME"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 0
+    fi
 fi
 
 # Function to filter reads for a specific bin
@@ -469,66 +502,95 @@ get_reads_for_reassembly() {
 
 # Main processing function
 stage_bin_reassembly() {
-    local sample_name="$1"
-    local treatment="$2"
+    local treatment="$1"
+    local sample_name="${2:-}"  # Optional for treatment-level mode
 
-    log "Running bin reassembly for $sample_name ($treatment)"
-
-    local output_dir="${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}"
+    if [ -n "$sample_name" ]; then
+        log "Running bin reassembly for $sample_name ($treatment)"
+        local output_dir="${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}"
+        local entity_name="$sample_name"
+    else
+        log "Running treatment-level bin reassembly for $treatment"
+        local output_dir="${OUTPUT_DIR}/reassembly/${treatment}"
+        local entity_name="$treatment"
+    fi
 
     mkdir -p "$output_dir"
 
     # Check if already processed
     if [ -d "${output_dir}/reassembled_bins" ] && [ "$(ls -A "${output_dir}/reassembled_bins/"*.fa 2>/dev/null)" ]; then
-        log "Sample $sample_name already reassembled, skipping..."
+        log "Bin reassembly already completed for $entity_name, skipping..."
         return 0
     fi
 
-    # Find refined bins (from DAS Tool stage 04) - handles both treatment and sample level
-    local refined_bins_dir=$(get_refined_bins_dir "$sample_name" "$treatment")
-    if [ $? -ne 0 ] || [ -z "$refined_bins_dir" ]; then
-        log "ERROR: No refined bins found for $sample_name"
+    # Find refined bins (from DAS Tool stage 04)
+    if [ -n "$sample_name" ]; then
+        local refined_bins_dir=$(get_refined_bins_dir "$sample_name" "$treatment")
+    else
+        # Treatment-level: bins are at treatment root
+        local refined_bins_dir="${OUTPUT_DIR}/bin_refinement/${treatment}/dastool_DASTool_bins"
+    fi
+
+    if [ ! -d "$refined_bins_dir" ] || [ ! "$(ls -A "$refined_bins_dir"/*.fa 2>/dev/null)" ]; then
+        log "ERROR: No refined bins found at: $refined_bins_dir"
         return 1
     fi
 
-    # Get appropriate reads based on bin location (treatment vs sample level)
-    local reads_info=$(get_reads_for_reassembly "$sample_name" "$treatment" "$refined_bins_dir")
-    if [ $? -ne 0 ] || [ -z "$reads_info" ]; then
-        log "ERROR: Could not find appropriate reads for reassembly"
-        return 1
-    fi
+    # Get appropriate reads
+    if [ -n "$sample_name" ]; then
+        local reads_info=$(get_reads_for_reassembly "$sample_name" "$treatment" "$refined_bins_dir")
+        if [ $? -ne 0 ] || [ -z "$reads_info" ]; then
+            log "ERROR: Could not find appropriate reads for reassembly"
+            return 1
+        fi
+        IFS='|' read -r read1 read2 singletons reads_level <<< "$reads_info"
+    else
+        # Treatment-level: always use merged reads
+        local merged_reads_dir="${OUTPUT_DIR}/coassembly/${treatment}/merged_reads"
+        local read1="${merged_reads_dir}/merged_R1.fastq.gz"
+        local read2="${merged_reads_dir}/merged_R2.fastq.gz"
+        local singletons="${merged_reads_dir}/merged_singletons.fastq.gz"
 
-    # Parse reads information
-    IFS='|' read -r read1 read2 singletons reads_level <<< "$reads_info"
+        # Create merged reads if they don't exist
+        if [ ! -f "$read1" ] || [ ! -f "$read2" ]; then
+            log "Merged reads not found - creating them now..."
+            if ! create_merged_reads "$treatment"; then
+                log "ERROR: Failed to create merged reads"
+                return 1
+            fi
+        fi
+
+        local reads_level="treatment-level (merged)"
+    fi
 
     log "Using $reads_level reads for bin reassembly"
-    
+
     # Count bins to reassemble
     local bin_count=$(ls -1 "$refined_bins_dir"/*.fa 2>/dev/null | wc -l)
-    log "Reassembling $bin_count refined bins for $sample_name"
-    
+    log "Reassembling $bin_count refined bins for $entity_name"
+
     if [ $bin_count -eq 0 ]; then
-        log "ERROR: No bins to reassemble for $sample_name"
+        log "ERROR: No bins to reassemble"
         return 1
     fi
-    
+
     # Try MetaWRAP reassembly first
-    if run_metawrap_reassembly "$sample_name" "$treatment" "$refined_bins_dir" "$read1" "$read2" "$output_dir"; then
+    if run_metawrap_reassembly "$entity_name" "$treatment" "$refined_bins_dir" "$read1" "$read2" "$output_dir"; then
         log "MetaWRAP reassembly completed successfully"
     else
         log "MetaWRAP reassembly failed, trying manual reassembly..."
-        
-        if run_manual_reassembly "$sample_name" "$treatment" "$refined_bins_dir" "$read1" "$read2" "$singletons" "$output_dir"; then
+
+        if run_manual_reassembly "$entity_name" "$treatment" "$refined_bins_dir" "$read1" "$read2" "$singletons" "$output_dir"; then
             log "Manual reassembly completed successfully"
         else
             log "ERROR: Both MetaWRAP and manual reassembly failed"
             return 1
         fi
     fi
-    
+
     # Generate reassembly statistics
-    generate_reassembly_stats "$sample_name" "$treatment" "$refined_bins_dir" "${output_dir}/reassembled_bins"
-    
+    generate_reassembly_stats "$entity_name" "$treatment" "$refined_bins_dir" "${output_dir}/reassembled_bins"
+
     return 0
 }
 
@@ -616,10 +678,15 @@ EOF
 
 # Validation function
 validate_bin_reassembly() {
-    local sample_name="$1"
-    local treatment="$2"
-    local output_dir="${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}"
-    
+    local treatment="$1"
+    local sample_name="${2:-}"
+
+    if [ -n "$sample_name" ]; then
+        local output_dir="${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}"
+    else
+        local output_dir="${OUTPUT_DIR}/reassembly/${treatment}"
+    fi
+
     # Check if reassembled bins directory exists and has content
     if [ -d "${output_dir}/reassembled_bins" ] && [ "$(ls -A "${output_dir}/reassembled_bins/"*.fa 2>/dev/null)" ]; then
         # Check that reassembled bins are not empty
@@ -629,24 +696,43 @@ validate_bin_reassembly() {
             fi
         done
     fi
-    
+
     return 1
 }
 
 # Run the bin reassembly stage
-if stage_bin_reassembly "$SAMPLE_NAME" "$TREATMENT"; then
-    # Validate results
-    if validate_bin_reassembly "$SAMPLE_NAME" "$TREATMENT"; then
-        create_sample_checkpoint "$SAMPLE_NAME" "bin_reassembly"
-        log "====== Bin reassembly completed for $SAMPLE_NAME ======"
+if [ "$PROCESSING_MODE" = "treatment-level" ]; then
+    # Treatment-level mode: run once for the entire treatment
+    if stage_bin_reassembly "$TREATMENT"; then
+        # Validate results
+        if validate_bin_reassembly "$TREATMENT"; then
+            create_treatment_checkpoint "$TREATMENT" "bin_reassembly"
+            log "====== Treatment-level bin reassembly completed for $TREATMENT ======"
+        else
+            log "ERROR: Bin reassembly validation failed for treatment $TREATMENT"
+            exit 1
+        fi
     else
-        log "ERROR: Bin reassembly validation failed for $SAMPLE_NAME"
+        log "ERROR: Bin reassembly stage failed for treatment $TREATMENT"
+        cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
 else
-    log "ERROR: Bin reassembly stage failed for $SAMPLE_NAME"
-    cleanup_temp_dir "$TEMP_DIR"
-    exit 1
+    # Sample-level mode: run for individual sample
+    if stage_bin_reassembly "$TREATMENT" "$SAMPLE_NAME"; then
+        # Validate results
+        if validate_bin_reassembly "$TREATMENT" "$SAMPLE_NAME"; then
+            create_sample_checkpoint "$SAMPLE_NAME" "bin_reassembly"
+            log "====== Bin reassembly completed for $SAMPLE_NAME ======"
+        else
+            log "ERROR: Bin reassembly validation failed for $SAMPLE_NAME"
+            exit 1
+        fi
+    else
+        log "ERROR: Bin reassembly stage failed for $SAMPLE_NAME"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
 fi
 
 # Cleanup
