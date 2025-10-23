@@ -5,7 +5,7 @@
 
 # Default values
 START_STAGE=-1  # Start from lane merging by default
-END_STAGE=11
+END_STAGE=12    # Updated to include new stages
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PIPELINE_SCRIPT_DIR="$SCRIPT_DIR"  # Export for SLURM jobs
 
@@ -23,8 +23,8 @@ Master script to run the complete metagenomic pipeline.
 Supports multiple sample sheet formats including multi-run datasets.
 
 OPTIONS:
-    -s, --start-stage NUM         Start from stage NUM (-1 to 11) [default: -1]
-    -e, --end-stage NUM           End at stage NUM (-1 to 11) [default: 11]
+    -s, --start-stage NUM         Start from stage NUM (-1 to 12) [default: -1]
+    -e, --end-stage NUM           End at stage NUM (-1 to 12) [default: 12]
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
     -t, --treatment NAME          Run only for specific treatment/group (can be used multiple times)
@@ -66,14 +66,16 @@ STAGES:
     1  - Assembly (MetaSPAdes - individual or co-assembly)
     2  - Plasmid Detection
     3  - Binning (sample-level or treatment-level based on -b flag)
-    4  - Bin Refinement
-    5  - Bin Reassembly
-    6  - MAGpurify
-    7  - CheckM2
-    8  - CoverM
-    9  - Bin Collection
-   10  - Combined Report
-   11  - Final Report
+    4  - Bin Refinement (sample-level or treatment-level based on -b flag)
+    5  - Bin Reassembly (sample-level or treatment-level based on -b flag)
+    6  - MAGpurify (sample-level or treatment-level based on -b flag)
+    7  - CheckM2 (sample-level or treatment-level based on -b flag)
+  7.5  - Bin Selection (selects best reassembly version per bin)
+    8  - MetaWRAP Quant (quantifies refined bins before reassembly)
+    9  - CoverM (per-sample abundance calculation)
+   10  - Bin Collection
+   11  - Combined Report
+   12  - Final Report
 
 BINNING MODES:
     By default, binning is performed at the sample level (one binning job per sample).
@@ -238,15 +240,15 @@ is_in_array() {
     return 1
 }
 
-# Function to validate stage numbers (supports -1 and 0.5)
+# Function to validate stage numbers (supports -1, 0.5, and 7.5)
 validate_stage() {
     local stage="$1"
     local stage_name="$2"
-    
+
     # Check if it's a valid stage number
-    if [[ "$stage" != "-1" && "$stage" != "0" && "$stage" != "0.5" ]] && \
-       ! [[ "$stage" =~ ^[1-9]$|^1[0-1]$ ]]; then
-        echo "Error: $stage_name must be -1, 0, 0.5, or 1-11"
+    if [[ "$stage" != "-1" && "$stage" != "0" && "$stage" != "0.5" && "$stage" != "7.5" ]] && \
+       ! [[ "$stage" =~ ^[1-9]$|^1[0-2]$ ]]; then
+        echo "Error: $stage_name must be -1, 0, 0.5, 1-12, or 7.5"
         return 1
     fi
     return 0
@@ -352,10 +354,12 @@ declare -A STAGE_NAMES=(
     [5]="Bin Reassembly"
     [6]="MAGpurify"
     [7]="CheckM2"
-    [8]="CoverM"
-    [9]="Bin Collection"
-    [10]="Combined Report"
-    [11]="Final Report"
+    [7.5]="Bin Selection"
+    [8]="MetaWRAP Quant"
+    [9]="CoverM"
+    [10]="Bin Collection"
+    [11]="Combined Report"
+    [12]="Final Report"
 )
 
 declare -A STAGE_SCRIPTS=(
@@ -369,10 +373,12 @@ declare -A STAGE_SCRIPTS=(
     [5]="05_bin_reassembly.sh"
     [6]="06_magpurify.sh"
     [7]="07_checkm2.sh"
-    [8]="08_coverm.sh"
-    [9]="09_bin_collection.sh"
-    [10]="10_combined_report.sh"
-    [11]="11_final_report.sh"
+    [7.5]="07b_bin_selection.sh"
+    [8]="08a_metawrap_quant.sh"
+    [9]="08_coverm.sh"
+    [10]="09_bin_collection.sh"
+    [11]="10_combined_report.sh"
+    [12]="11_final_report.sh"
 )
 
 # Function to get the correct assembly script based on mode
@@ -408,8 +414,22 @@ fi
 
 if [ "$TREATMENT_LEVEL_BINNING" = true ]; then
     STAGE_NAMES[3]="Binning (treatment-level)"
+    STAGE_NAMES[4]="Bin Refinement (treatment-level)"
+    STAGE_NAMES[5]="Bin Reassembly (treatment-level)"
+    STAGE_NAMES[6]="MAGpurify (treatment-level)"
+    STAGE_NAMES[7]="CheckM2 (treatment-level)"
+    STAGE_NAMES[7.5]="Bin Selection (treatment-level)"
+    STAGE_NAMES[8]="MetaWRAP Quant (treatment-level)"
+    STAGE_NAMES[9]="CoverM (per-sample, dual mode)"
 else
     STAGE_NAMES[3]="Binning (sample-level)"
+    STAGE_NAMES[4]="Bin Refinement (sample-level)"
+    STAGE_NAMES[5]="Bin Reassembly (sample-level)"
+    STAGE_NAMES[6]="MAGpurify (sample-level)"
+    STAGE_NAMES[7]="CheckM2 (sample-level)"
+    STAGE_NAMES[7.5]="Bin Selection (sample-level)"
+    STAGE_NAMES[8]="MetaWRAP Quant (sample-level)"
+    STAGE_NAMES[9]="CoverM (per-sample)"
 fi
 
 # Function to check if filters match any samples
@@ -582,9 +602,34 @@ calculate_array_size() {
         fi
         return
     fi
-    
-    # Sample-level stages (-1, 0, 0.5, 1-8 in individual mode)
-    if compare_stages "$stage" "8" "le"; then
+
+    # Special handling for stages 5, 6, 7, 7.5, 8 in treatment-level binning mode
+    if [ "$TREATMENT_LEVEL_BINNING" = true ] && \
+       ( [ "$stage" = "5" ] || [ "$stage" = "6" ] || [ "$stage" = "7" ] || \
+         [ "$stage" = "7.5" ] || [ "$stage" = "8" ] ); then
+        # Treatment-level: run once per treatment
+        local treatments_list=$(get_treatments)
+        if [ -n "$treatments_list" ]; then
+            if [ ${#SPECIFIC_TREATMENTS[@]} -gt 0 ]; then
+                # Count only filtered treatments
+                local count=0
+                for treatment in $treatments_list; do
+                    if is_in_array "$treatment" "${SPECIFIC_TREATMENTS[@]}"; then
+                        ((count++))
+                    fi
+                done
+                echo "$count"
+            else
+                echo "$treatments_list" | wc -w
+            fi
+        else
+            echo "0"
+        fi
+        return
+    fi
+
+    # Sample-level stages (-1, 0, 0.5, 1-9 in individual mode)
+    if compare_stages "$stage" "9" "le"; then
         # Filter samples if specific treatment or sample requested
         if [ ${#SPECIFIC_TREATMENTS[@]} -gt 0 ] || [ ${#SPECIFIC_SAMPLES[@]} -gt 0 ]; then
             local count=0
@@ -686,9 +731,28 @@ get_filtered_indices() {
         echo "${indices[@]}"
         return
     fi
-    
+
+    # Special handling for stages 5, 6, 7, 7.5, 8 in treatment-level binning mode
+    if [ "$TREATMENT_LEVEL_BINNING" = true ] && \
+       ( [ "$stage" = "5" ] || [ "$stage" = "6" ] || [ "$stage" = "7" ] || \
+         [ "$stage" = "7.5" ] || [ "$stage" = "8" ] ); then
+        # Treatment-level: return treatment indices
+        treatments_list=$(get_treatments)
+        if [ -n "$treatments_list" ]; then
+            local treatments=($treatments_list)
+            for i in "${!treatments[@]}"; do
+                if ! is_in_array "${treatments[$i]}" "${SPECIFIC_TREATMENTS[@]}"; then
+                    continue
+                fi
+                indices+=($i)
+            done
+        fi
+        echo "${indices[@]}"
+        return
+    fi
+
     # Sample-level stages
-    if compare_stages "$stage" "8" "le"; then
+    if compare_stages "$stage" "9" "le"; then
         for i in $(seq 0 $((total_samples - 1))); do
             sample_info=$(get_sample_info_by_index $i 2>/dev/null)
             if [ -n "$sample_info" ]; then
@@ -896,12 +960,16 @@ current_stage=$START_STAGE
 
 while compare_stages "$current_stage" "$END_STAGE" "le"; do
     STAGES_TO_RUN+=("$current_stage")
-    
-    # Increment stage (handle 0.5 case)
+
+    # Increment stage (handle fractional stages: 0.5 and 7.5)
     if [ "$current_stage" = "0" ] && compare_stages "0.5" "$END_STAGE" "le"; then
         current_stage="0.5"
     elif [ "$current_stage" = "0.5" ]; then
         current_stage="1"
+    elif [ "$current_stage" = "7" ] && compare_stages "7.5" "$END_STAGE" "le"; then
+        current_stage="7.5"
+    elif [ "$current_stage" = "7.5" ]; then
+        current_stage="8"
     elif [ "$current_stage" = "-1" ]; then
         current_stage="0"
     else
