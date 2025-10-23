@@ -234,7 +234,7 @@ stage_metawrap_quant() {
     fi
 
     # Activate MetaWRAP environment
-    activate_env metawrap
+    activate_env metawrap-env
 
     # Check if MetaWRAP is available
     if ! command -v metawrap &> /dev/null; then
@@ -242,10 +242,6 @@ stage_metawrap_quant() {
         conda deactivate
         return 1
     fi
-
-    # Run MetaWRAP quant_bins
-    log "Running MetaWRAP quant_bins..."
-    log "Command: metawrap quant_bins -b $bins_dir -o $output_dir -a ${ASSEMBLY_FILE} -t $SLURM_CPUS_PER_TASK $r1 $r2"
 
     # For quant_bins, we need the assembly file
     # Determine which assembly to use
@@ -266,16 +262,52 @@ stage_metawrap_quant() {
 
     log "Using assembly: $assembly_file"
 
-    # Run MetaWRAP quant_bins
+    # MetaWRAP quant_bins requires reads in *_1.fastq and *_2.fastq format
+    # Create symbolic links with correct naming in temp directory
+    local reads_temp_dir="${TEMP_DIR}/reads_links"
+    mkdir -p "$reads_temp_dir"
+
+    local base_name="reads"
+    local link_r1="${reads_temp_dir}/${base_name}_1.fastq"
+    local link_r2="${reads_temp_dir}/${base_name}_2.fastq"
+
+    # Handle .gz extension - MetaWRAP can handle gzipped files if named correctly
+    if [[ "$r1" =~ \.gz$ ]]; then
+        link_r1="${link_r1}.gz"
+        link_r2="${link_r2}.gz"
+    fi
+
+    log "Creating symbolic links for MetaWRAP quant_bins..."
+    log "  $r1 -> $link_r1"
+    log "  $r2 -> $link_r2"
+
+    ln -sf "$r1" "$link_r1"
+    ln -sf "$r2" "$link_r2"
+
+    # Verify symlinks were created
+    if [ ! -L "$link_r1" ] || [ ! -L "$link_r2" ]; then
+        log "ERROR: Failed to create symbolic links for reads"
+        conda deactivate
+        return 1
+    fi
+
+    # Run MetaWRAP quant_bins with symlinked reads
+    log "Running MetaWRAP quant_bins..."
+    log "Command: metawrap quant_bins -b $bins_dir -o $output_dir -a $assembly_file -t $SLURM_CPUS_PER_TASK $link_r1 $link_r2"
+
     metawrap quant_bins \
         -b "$bins_dir" \
         -o "$output_dir" \
         -a "$assembly_file" \
         -t $SLURM_CPUS_PER_TASK \
-        "$r1" "$r2" \
+        "$link_r1" "$link_r2" \
         2>&1 | tee "${LOG_DIR}/${treatment}/$([ -n "$sample_name" ] && echo "${sample_name}_" || echo "")metawrap_quant.log"
 
     local exit_code=${PIPESTATUS[0]}
+
+    # Cleanup symlinks
+    rm -f "$link_r1" "$link_r2"
+    rmdir "$reads_temp_dir" 2>/dev/null
 
     conda deactivate
 
