@@ -17,29 +17,68 @@ else
     source "${SCRIPT_DIR}/00_config_utilities.sh"
 fi
 
-# Get sample info from array task ID
-SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)
-if [ -z "$SAMPLE_INFO" ]; then
-    log "No sample found for array index $SLURM_ARRAY_TASK_ID"
-    exit 0
-fi
+# Determine processing mode: treatment-level or sample-level
+if [ "${TREATMENT_LEVEL_BINNING:-false}" = "true" ]; then
+    # Treatment-level mode: array index maps to treatment
+    ARRAY_INDEX=${SLURM_ARRAY_TASK_ID:-0}
 
-# Parse sample information
-IFS='|' read -r SAMPLE_NAME TREATMENT _ _ <<< "$SAMPLE_INFO"
-export SAMPLE_NAME TREATMENT
+    # Check if treatments file exists
+    if [ ! -f "$TREATMENTS_FILE" ]; then
+        log "ERROR: Treatments file not found: $TREATMENTS_FILE"
+        exit 1
+    fi
 
-# Initialize
-init_conda
-create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
-TEMP_DIR=$(setup_temp_dir)
+    # Get treatment from treatments file
+    TREATMENT=$(sed -n "$((ARRAY_INDEX + 1))p" "$TREATMENTS_FILE" 2>/dev/null | tr -d '\r\n' | xargs)
 
-log "====== Starting MAGpurify for $SAMPLE_NAME ($TREATMENT) ======"
+    if [ -z "$TREATMENT" ]; then
+        log "No treatment found for array index $ARRAY_INDEX"
+        exit 0
+    fi
 
-# Check if stage already completed
-if check_sample_checkpoint "$SAMPLE_NAME" "magpurify"; then
-    log "MAGpurify already completed for $SAMPLE_NAME"
-    cleanup_temp_dir "$TEMP_DIR"
-    exit 0
+    export TREATMENT
+    PROCESSING_MODE="treatment-level"
+
+    # Initialize for treatment-level
+    init_conda
+    create_treatment_dirs "$TREATMENT"
+    TEMP_DIR=$(setup_temp_dir)
+
+    log "====== Starting MAGpurify for treatment $TREATMENT (treatment-level mode) ======"
+
+    # Check if stage already completed for treatment
+    if check_treatment_checkpoint "$TREATMENT" "magpurify"; then
+        log "MAGpurify already completed for treatment $TREATMENT"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 0
+    fi
+
+else
+    # Sample-level mode: array index maps to sample (original behavior)
+    SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)
+    if [ -z "$SAMPLE_INFO" ]; then
+        log "No sample found for array index $SLURM_ARRAY_TASK_ID"
+        exit 0
+    fi
+
+    # Parse sample information
+    IFS='|' read -r SAMPLE_NAME TREATMENT _ _ <<< "$SAMPLE_INFO"
+    export SAMPLE_NAME TREATMENT
+    PROCESSING_MODE="sample-level"
+
+    # Initialize for sample-level
+    init_conda
+    create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
+    TEMP_DIR=$(setup_temp_dir)
+
+    log "====== Starting MAGpurify for $SAMPLE_NAME ($TREATMENT) ======"
+
+    # Check if stage already completed for sample
+    if check_sample_checkpoint "$SAMPLE_NAME" "magpurify"; then
+        log "MAGpurify already completed for $SAMPLE_NAME"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 0
+    fi
 fi
 
 # Function to clean bins by removing contigs with ambiguous bases
@@ -222,49 +261,63 @@ get_reassembled_bins_dir() {
 
 # Main processing function
 stage_magpurify() {
-    local sample_name="$1"
-    local treatment="$2"
+    local treatment="$1"
+    local sample_name="${2:-}"  # Optional for treatment-level mode
 
-    log "Running MAGpurify for $sample_name ($treatment)"
-
-    local output_dir="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}"
+    if [ -n "$sample_name" ]; then
+        # Sample-level mode
+        log "Running MAGpurify for $sample_name ($treatment)"
+        local output_dir="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}"
+        local entity_desc="sample $sample_name"
+    else
+        # Treatment-level mode
+        log "Running MAGpurify for treatment $treatment (all bins)"
+        local output_dir="${OUTPUT_DIR}/magpurify/${treatment}"
+        local entity_desc="treatment $treatment"
+    fi
 
     mkdir -p "${output_dir}/purified_bins"
 
     # Check if already processed
     if [ -f "${output_dir}/magpurify_complete.flag" ]; then
-        log "Sample $sample_name already processed, skipping..."
+        log "MAGpurify already processed for $entity_desc, skipping..."
         return 0
     fi
 
     # Find reassembled bins - handles both treatment and sample level
-    local input_bins_dir=$(get_reassembled_bins_dir "$sample_name" "$treatment")
-    if [ $? -ne 0 ] || [ -z "$input_bins_dir" ]; then
-        log "ERROR: No reassembled bins found for $sample_name"
+    if [ -n "$sample_name" ]; then
+        local input_bins_dir=$(get_reassembled_bins_dir "$sample_name" "$treatment")
+    else
+        # Treatment-level: look for treatment-level bins
+        local input_bins_dir="${OUTPUT_DIR}/reassembly/${treatment}/reassembled_bins"
+    fi
+
+    if [ ! -d "$input_bins_dir" ] || [ -z "$(ls -A "$input_bins_dir"/*.fa 2>/dev/null)" ]; then
+        log "ERROR: No reassembled bins found for $entity_desc at: $input_bins_dir"
         return 1
     fi
     
     # Activate MAGpurify environment
     activate_env metagenome_assembly
-    
+
     # Check if MAGpurify is available
     if ! command -v magpurify &> /dev/null; then
         log "ERROR: MAGpurify not available in environment"
         conda deactivate
         return 1
     fi
-    
+
     # Set up temporary workspace
-    local mag_temp="${TEMP_DIR}/mag_${sample_name}"
+    local mag_temp="${TEMP_DIR}/mag_work"
     mkdir -p "$mag_temp"
-    
+
     # Get list of bins
     local bins=($(ls "$input_bins_dir"/*.fa))
     local bin_count=${#bins[@]}
-    log "Processing $bin_count bins with MAGpurify for $sample_name"
-    
+    log "Processing $bin_count bins with MAGpurify for $entity_desc"
+
     if [ $bin_count -eq 0 ]; then
-        log "ERROR: No bins found for $sample_name"
+        log "ERROR: No bins found for $entity_desc"
         conda deactivate
         return 1
     fi
@@ -317,18 +370,22 @@ stage_magpurify() {
     done
     
     conda deactivate
-    
-    log "MAGpurify completed for $sample_name:"
+
+    log "MAGpurify completed for $entity_desc:"
     log "  Processed: $processed_count/$bin_count bins"
     log "  Cleaned: $cleaned_count bins"
     log "  Failed: $failed_count bins"
     log "  Total contigs: $total_contigs_before → $total_contigs_after"
-    
+
     # Create completion flag
     touch "${output_dir}/magpurify_complete.flag"
-    
-    # Generate sample statistics
-    generate_sample_stats "$sample_name" "$treatment" "$input_bins_dir" "${output_dir}/purified_bins"
+
+    # Generate statistics
+    if [ -n "$sample_name" ]; then
+        generate_sample_stats "$sample_name" "$treatment" "$input_bins_dir" "${output_dir}/purified_bins"
+    else
+        generate_treatment_stats "$treatment" "$input_bins_dir" "${output_dir}/purified_bins"
+    fi
     
     if [ $processed_count -gt 0 ]; then
         return 0
@@ -414,14 +471,103 @@ EOF
     log "MAGpurify statistics created: $stats_file"
 }
 
+# Generate statistics for a treatment (treatment-level mode)
+generate_treatment_stats() {
+    local treatment="$1"
+    local input_dir="$2"
+    local output_dir="$3"
+    local stats_file="${OUTPUT_DIR}/magpurify/${treatment}/magpurify_stats.txt"
+
+    cat > "$stats_file" << EOF
+MAGpurify Statistics for Treatment $treatment
+===========================================
+
+Date: $(date)
+Treatment: $treatment
+Mode: Treatment-level
+
+Bin Processing Results:
+EOF
+
+    local total_contigs_before=0
+    local total_contigs_after=0
+    local total_size_before=0
+    local total_size_after=0
+    local bins_cleaned=0
+    local bins_processed=0
+
+    echo "Bin_Name\tContigs_Before\tContigs_After\tContigs_Removed\tSize_Before\tSize_After\tSize_Change" >> "$stats_file"
+
+    for input_bin in "$input_dir"/*.fa; do
+        if [ -f "$input_bin" ]; then
+            local bin_name=$(basename "$input_bin" .fa)
+            local output_bin="${output_dir}/${bin_name}.fa"
+
+            if [ -f "$output_bin" ]; then
+                local before_contigs=$(grep -c "^>" "$input_bin" 2>/dev/null || echo 0)
+                local after_contigs=$(grep -c "^>" "$output_bin" 2>/dev/null || echo 0)
+                local removed_contigs=$((before_contigs - after_contigs))
+
+                local before_size=$(grep -v "^>" "$input_bin" | tr -d '\n' | wc -c)
+                local after_size=$(grep -v "^>" "$output_bin" | tr -d '\n' | wc -c)
+                local size_change=$((after_size - before_size))
+
+                echo "$bin_name\t$before_contigs\t$after_contigs\t$removed_contigs\t$before_size\t$after_size\t$size_change" >> "$stats_file"
+
+                total_contigs_before=$((total_contigs_before + before_contigs))
+                total_contigs_after=$((total_contigs_after + after_contigs))
+                total_size_before=$((total_size_before + before_size))
+                total_size_after=$((total_size_after + after_size))
+
+                if [ $removed_contigs -gt 0 ]; then
+                    ((bins_cleaned++))
+                fi
+                ((bins_processed++))
+            fi
+        fi
+    done
+
+    echo "" >> "$stats_file"
+    echo "Summary:" >> "$stats_file"
+    echo "  Bins processed: $bins_processed" >> "$stats_file"
+    echo "  Bins cleaned: $bins_cleaned" >> "$stats_file"
+    echo "  Total contigs: $total_contigs_before → $total_contigs_after ($((total_contigs_after - total_contigs_before)) change)" >> "$stats_file"
+    echo "  Total size: $total_size_before → $total_size_after bp ($((total_size_after - total_size_before)) bp change)" >> "$stats_file"
+
+    if [ $bins_processed -gt 0 ]; then
+        local cleaning_rate=$(echo "scale=1; ($bins_cleaned * 100) / $bins_processed" | bc -l)
+        echo "  Cleaning rate: ${cleaning_rate}%" >> "$stats_file"
+    fi
+
+    if [ $total_contigs_before -gt 0 ]; then
+        local contigs_removed_pct=$(echo "scale=1; (($total_contigs_before - $total_contigs_after) * 100) / $total_contigs_before" | bc -l)
+        echo "  Contigs removed: ${contigs_removed_pct}%" >> "$stats_file"
+    fi
+
+    log "MAGpurify statistics created: $stats_file"
+}
+
 # Generate overall statistics report
 generate_magpurify_summary() {
-    local sample_name="$1"
-    local treatment="$2"
-    local summary_file="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/magpurify_summary.txt"
+    local treatment="$1"
+    local sample_name="${2:-}"
+
+    if [ -n "$sample_name" ]; then
+        local summary_file="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/magpurify_summary.txt"
+        local entity_title="$sample_name"
+    else
+        local summary_file="${OUTPUT_DIR}/magpurify/${treatment}/magpurify_summary.txt"
+        local entity_title="Treatment $treatment"
+    fi
     
+    if [ -n "$sample_name" ]; then
+        local results_path="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/"
+    else
+        local results_path="${OUTPUT_DIR}/magpurify/${treatment}/purified_bins/"
+    fi
+
     cat > "$summary_file" << EOF
-MAGpurify Summary for $sample_name
+MAGpurify Summary for $entity_title
 =================================
 
 MAGpurify is a tool for removing contaminating contigs from metagenome-assembled genomes (MAGs).
@@ -444,7 +590,7 @@ Processing Steps:
   4. Clean-bin: Remove flagged contigs
   5. Quality check: Validate output bins
 
-Results are saved in: ${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/
+Results are saved in: $results_path
 
 EOF
     
@@ -453,9 +599,14 @@ EOF
 
 # Validation function
 validate_magpurify() {
-    local sample_name="$1"
-    local treatment="$2"
-    local output_dir="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}"
+    local treatment="$1"
+    local sample_name="${2:-}"
+
+    if [ -n "$sample_name" ]; then
+        local output_dir="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}"
+    else
+        local output_dir="${OUTPUT_DIR}/magpurify/${treatment}"
+    fi
     
     # Check completion flag
     if [ ! -f "${output_dir}/magpurify_complete.flag" ]; then
@@ -483,23 +634,48 @@ validate_magpurify() {
     return 1
 }
 
-# Run the MAGpurify stage
-if stage_magpurify "$SAMPLE_NAME" "$TREATMENT"; then
-    # Generate summary
-    generate_magpurify_summary "$SAMPLE_NAME" "$TREATMENT"
-    
-    # Validate results
-    if validate_magpurify "$SAMPLE_NAME" "$TREATMENT"; then
-        create_sample_checkpoint "$SAMPLE_NAME" "magpurify"
-        log "====== MAGpurify completed for $SAMPLE_NAME ======"
+# Run the MAGpurify stage based on processing mode
+if [ "$PROCESSING_MODE" = "treatment-level" ]; then
+    # Treatment-level mode: run once for all bins in treatment
+    if stage_magpurify "$TREATMENT"; then
+        # Generate summary
+        generate_magpurify_summary "$TREATMENT"
+
+        # Validate results
+        if validate_magpurify "$TREATMENT"; then
+            create_treatment_checkpoint "$TREATMENT" "magpurify"
+            log "====== MAGpurify completed for treatment $TREATMENT ======"
+        else
+            log "ERROR: MAGpurify validation failed for treatment $TREATMENT"
+            cleanup_temp_dir "$TEMP_DIR"
+            exit 1
+        fi
     else
-        log "ERROR: MAGpurify validation failed for $SAMPLE_NAME"
+        log "ERROR: MAGpurify stage failed for treatment $TREATMENT"
+        cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
+
 else
-    log "ERROR: MAGpurify stage failed for $SAMPLE_NAME"
-    cleanup_temp_dir "$TEMP_DIR"
-    exit 1
+    # Sample-level mode: run for individual sample
+    if stage_magpurify "$TREATMENT" "$SAMPLE_NAME"; then
+        # Generate summary
+        generate_magpurify_summary "$TREATMENT" "$SAMPLE_NAME"
+
+        # Validate results
+        if validate_magpurify "$TREATMENT" "$SAMPLE_NAME"; then
+            create_sample_checkpoint "$SAMPLE_NAME" "magpurify"
+            log "====== MAGpurify completed for $SAMPLE_NAME ======"
+        else
+            log "ERROR: MAGpurify validation failed for $SAMPLE_NAME"
+            cleanup_temp_dir "$TEMP_DIR"
+            exit 1
+        fi
+    else
+        log "ERROR: MAGpurify stage failed for $SAMPLE_NAME"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
 fi
 
 # Cleanup
