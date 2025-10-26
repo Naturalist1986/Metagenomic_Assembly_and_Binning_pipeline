@@ -321,12 +321,10 @@ run_gtdbtk() {
         return 1
     fi
 
-    # Check GTDB-Tk database
+    # Set GTDB-Tk database path if not already set
     if [ -z "${GTDBTK_DATA_PATH:-}" ]; then
-        log "ERROR: GTDBTK_DATA_PATH environment variable not set"
-        log "  Please set GTDBTK_DATA_PATH to the location of GTDB-Tk reference data"
-        conda deactivate
-        return 1
+        export GTDBTK_DATA_PATH="/sci/backup/aerez/aerez/moshea/release226"
+        log "  Setting GTDBTK_DATA_PATH to: $GTDBTK_DATA_PATH"
     fi
 
     if [ ! -d "$GTDBTK_DATA_PATH" ]; then
