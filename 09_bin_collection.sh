@@ -86,7 +86,7 @@ collect_selected_bins() {
 
     # Copy selected bins to collection directory
     log "  Copying selected bins to: $collected_bins_dir"
-    cp -v "$selected_bins_dir"/*.fa "$collected_bins_dir/" 2>&1 | head -20
+    cp "$selected_bins_dir"/*.fa "$collected_bins_dir/" >/dev/null 2>&1
 
     local copied_count=$(ls -1 "$collected_bins_dir"/*.fa 2>/dev/null | wc -l)
     log "  Successfully copied $copied_count bins"
@@ -264,6 +264,7 @@ run_gtdbtk() {
     local output_dir="$3"
 
     log "Running GTDB-Tk for treatment $treatment..."
+    log "  Bins directory: $bins_dir"
 
     # GTDB-Tk output directory
     local gtdbtk_dir="${output_dir}/gtdbtk"
@@ -275,11 +276,21 @@ run_gtdbtk() {
         return 0
     fi
 
-    # Count bins
-    local bin_count=$(ls -1 "$bins_dir"/*.fa 2>/dev/null | wc -l)
+    # Check that bins directory exists
+    if [ ! -d "$bins_dir" ]; then
+        log "ERROR: Bins directory not found: $bins_dir"
+        return 1
+    fi
+
+    # Count bins - use find for more reliable counting
+    local bin_count=$(find "$bins_dir" -maxdepth 1 -name "*.fa" -type f | wc -l)
+
+    log "  Found $bin_count .fa files in bins directory"
 
     if [ $bin_count -eq 0 ]; then
-        log "ERROR: No bins found for GTDB-Tk analysis"
+        log "ERROR: No .fa bins found for GTDB-Tk analysis in $bins_dir"
+        log "  Directory contents:"
+        ls -la "$bins_dir" 2>&1 | head -20 | while read line; do log "    $line"; done
         return 1
     fi
 
