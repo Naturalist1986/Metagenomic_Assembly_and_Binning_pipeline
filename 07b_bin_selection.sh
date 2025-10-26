@@ -98,6 +98,14 @@ get_bin_quality() {
     local completeness=$(echo "$bin_line" | awk '{print $2}')
     local contamination=$(echo "$bin_line" | awk '{print $3}')
 
+    # Validate that values are numeric and not empty/N/A
+    if [ -z "$completeness" ] || [ -z "$contamination" ] || \
+       [[ "$completeness" =~ [^0-9.] ]] || [[ "$contamination" =~ [^0-9.] ]]; then
+        # Invalid or missing values
+        echo ""
+        return 1
+    fi
+
     echo "${completeness}|${contamination}"
     return 0
 }
@@ -110,12 +118,24 @@ compare_bin_quality() {
     local comp2="$3"
     local cont2="$4"
 
+    # Validate all inputs are numeric
+    if ! [[ "$comp1" =~ ^[0-9]+\.?[0-9]*$ ]] || ! [[ "$cont1" =~ ^[0-9]+\.?[0-9]*$ ]] || \
+       ! [[ "$comp2" =~ ^[0-9]+\.?[0-9]*$ ]] || ! [[ "$cont2" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        # If any value is invalid, can't compare
+        return 1
+    fi
+
     # Calculate quality score: completeness - 5*contamination (MIMAG standard)
-    local score1=$(echo "scale=2; $comp1 - (5 * $cont1)" | bc -l)
-    local score2=$(echo "scale=2; $comp2 - (5 * $cont2)" | bc -l)
+    local score1=$(echo "scale=2; $comp1 - (5 * $cont1)" | bc -l 2>/dev/null)
+    local score2=$(echo "scale=2; $comp2 - (5 * $cont2)" | bc -l 2>/dev/null)
+
+    # Check if bc succeeded
+    if [ -z "$score1" ] || [ -z "$score2" ]; then
+        return 1
+    fi
 
     # Compare scores
-    local comparison=$(echo "$score1 > $score2" | bc -l)
+    local comparison=$(echo "$score1 > $score2" | bc -l 2>/dev/null)
 
     if [ "$comparison" -eq 1 ]; then
         return 0  # First is better
@@ -245,46 +265,67 @@ EOF
         local reason=""
 
         # Evaluate orig version
-        if [ $orig_exists -eq 0 ]; then
+        if [ $orig_exists -eq 0 ] && [ -n "$orig_quality" ]; then
             IFS='|' read -r comp cont <<< "$orig_quality"
-            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l)
-            log "  orig: completeness=$comp%, contamination=$cont%, score=$score"
-
-            best_version="orig"
-            best_comp="$comp"
-            best_cont="$cont"
-            best_score="$score"
-            reason="Only version available"
+            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l 2>/dev/null)
+            if [ -n "$score" ]; then
+                log "  orig: completeness=$comp%, contamination=$cont%, score=$score"
+                best_version="orig"
+                best_comp="$comp"
+                best_cont="$cont"
+                best_score="$score"
+                reason="Only version available"
+            else
+                log "  orig: FAILED to calculate quality score"
+            fi
+        else
+            log "  orig: NOT FOUND in CheckM2 report"
         fi
 
         # Evaluate strict version
-        if [ $strict_exists -eq 0 ]; then
+        if [ $strict_exists -eq 0 ] && [ -n "$strict_quality" ]; then
             IFS='|' read -r comp cont <<< "$strict_quality"
-            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l)
-            log "  strict: completeness=$comp%, contamination=$cont%, score=$score"
-
-            if [ -z "$best_version" ] || compare_bin_quality "$comp" "$cont" "$best_comp" "$best_cont"; then
-                best_version="strict"
-                best_comp="$comp"
-                best_cont="$cont"
-                best_score="$score"
-                reason="Better quality score than other versions"
+            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l 2>/dev/null)
+            if [ -n "$score" ]; then
+                log "  strict: completeness=$comp%, contamination=$cont%, score=$score"
+                if [ -z "$best_version" ] || compare_bin_quality "$comp" "$cont" "$best_comp" "$best_cont"; then
+                    best_version="strict"
+                    best_comp="$comp"
+                    best_cont="$cont"
+                    best_score="$score"
+                    reason="Better quality score than other versions"
+                fi
+            else
+                log "  strict: FAILED to calculate quality score"
             fi
+        else
+            log "  strict: NOT FOUND in CheckM2 report"
         fi
 
         # Evaluate permissive version
-        if [ $permissive_exists -eq 0 ]; then
+        if [ $permissive_exists -eq 0 ] && [ -n "$permissive_quality" ]; then
             IFS='|' read -r comp cont <<< "$permissive_quality"
-            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l)
-            log "  permissive: completeness=$comp%, contamination=$cont%, score=$score"
-
-            if [ -z "$best_version" ] || compare_bin_quality "$comp" "$cont" "$best_comp" "$best_cont"; then
-                best_version="permissive"
-                best_comp="$comp"
-                best_cont="$cont"
-                best_score="$score"
-                reason="Better quality score than other versions"
+            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l 2>/dev/null)
+            if [ -n "$score" ]; then
+                log "  permissive: completeness=$comp%, contamination=$cont%, score=$score"
+                if [ -z "$best_version" ] || compare_bin_quality "$comp" "$cont" "$best_comp" "$best_cont"; then
+                    best_version="permissive"
+                    best_comp="$comp"
+                    best_cont="$cont"
+                    best_score="$score"
+                    reason="Better quality score than other versions"
+                fi
+            else
+                log "  permissive: FAILED to calculate quality score"
             fi
+        else
+            log "  permissive: NOT FOUND in CheckM2 report"
+        fi
+
+        # Check if we found any valid version
+        if [ -z "$best_version" ]; then
+            log "  ERROR: No valid versions found for $base_bin (all versions missing or invalid)"
+            continue
         fi
 
         log "  SELECTED: $best_version (score=$best_score)"
