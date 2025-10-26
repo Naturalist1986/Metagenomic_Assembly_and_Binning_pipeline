@@ -99,32 +99,6 @@ collect_selected_bins() {
     return 0
 }
 
-# Function to get all samples for a treatment
-get_samples_for_treatment() {
-    local treatment="$1"
-
-    log "Finding samples for treatment $treatment..."
-
-    # Read samples file and filter by treatment
-    local samples=()
-    while IFS='|' read -r sample_name sample_treatment _ _; do
-        if [ "$sample_treatment" = "$treatment" ]; then
-            samples+=("$sample_name")
-        fi
-    done < <(get_samples)
-
-    if [ ${#samples[@]} -eq 0 ]; then
-        log "ERROR: No samples found for treatment $treatment"
-        return 1
-    fi
-
-    log "  Found ${#samples[@]} samples: ${samples[*]}"
-
-    # Return samples as space-separated string
-    echo "${samples[@]}"
-    return 0
-}
-
 # Function to consolidate CoverM abundance files
 consolidate_coverm_abundance() {
     local treatment="$1"
@@ -458,13 +432,16 @@ stage_bin_collection() {
     IFS='|' read -r collected_bins_dir bin_count <<< "$bins_info"
 
     # Step 2: Get all samples for this treatment
+    log "Finding samples for treatment $treatment..."
     local samples=$(get_samples_for_treatment "$treatment")
-    if [ $? -ne 0 ]; then
-        log "ERROR: Failed to get samples for treatment"
+
+    if [ -z "$samples" ]; then
+        log "ERROR: No samples found for treatment $treatment"
         return 1
     fi
 
     local sample_count=$(echo "$samples" | wc -w)
+    log "  Found $sample_count samples: $samples"
 
     # Step 3: Consolidate CoverM abundance data
     if ! consolidate_coverm_abundance "$treatment" "$samples" "$OUTPUT_DIR"; then
