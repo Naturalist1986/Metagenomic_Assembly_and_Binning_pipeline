@@ -110,8 +110,8 @@ consolidate_coverm_abundance() {
     # Convert samples string to array
     local samples=($samples_str)
 
-    # Output file
-    local consolidated_file="${output_dir}/coverm_abundance_consolidated.tsv"
+    # Output file (matches where Python saves it)
+    local consolidated_file="${output_dir}/bin_collection/${treatment}/coverm_abundance_consolidated.tsv"
 
     # Create Python script for consolidation
     local python_script="${TEMP_DIR}/consolidate_coverm.py"
