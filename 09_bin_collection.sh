@@ -3,715 +3,532 @@
 #SBATCH --array=0-99%10
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=4
-#SBATCH --mem=16G
-#SBATCH --time=2:00:00
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
+#SBATCH --time=24:00:00
 
-# 09_bin_collection.sh - High-quality genome bin collection and categorization
+# 09_bin_collection.sh - Collect selected bins, consolidate abundance, and run GTDB-Tk
 
 # Source configuration and utilities
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
+    source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "${SCRIPT_DIR}/00_config_utilities.sh"
+fi
 
-# Get sample info from array task ID
-SAMPLE_INFO=$(get_sample_info_by_index $SLURM_ARRAY_TASK_ID)
-if [ -z "$SAMPLE_INFO" ]; then
-    log "No sample found for array index $SLURM_ARRAY_TASK_ID"
+# This stage ALWAYS runs at treatment level (consolidates across samples)
+ARRAY_INDEX=${SLURM_ARRAY_TASK_ID:-0}
+
+# Check if treatments file exists
+if [ ! -f "$TREATMENTS_FILE" ]; then
+    log "ERROR: Treatments file not found: $TREATMENTS_FILE"
+    exit 1
+fi
+
+# Get treatment from treatments file
+TREATMENT=$(sed -n "$((ARRAY_INDEX + 1))p" "$TREATMENTS_FILE" 2>/dev/null | tr -d '\r\n' | xargs)
+
+if [ -z "$TREATMENT" ]; then
+    log "No treatment found for array index $ARRAY_INDEX"
     exit 0
 fi
 
-# Parse sample information
-IFS='|' read -r SAMPLE_NAME TREATMENT _ _ <<< "$SAMPLE_INFO"
-export SAMPLE_NAME TREATMENT
+export TREATMENT
 
 # Initialize
 init_conda
-create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
+create_treatment_dirs "$TREATMENT"
 TEMP_DIR=$(setup_temp_dir)
 
-log "====== Starting Bin Collection for $SAMPLE_NAME ($TREATMENT) ======"
+log "====== Starting Bin Collection for treatment $TREATMENT ======"
 
 # Check if stage already completed
-if check_sample_checkpoint "$SAMPLE_NAME" "bin_collection"; then
-    log "Bin collection already completed for $SAMPLE_NAME"
+if check_treatment_checkpoint "$TREATMENT" "bin_collection"; then
+    log "Bin collection already completed for treatment $TREATMENT"
     cleanup_temp_dir "$TEMP_DIR"
     exit 0
 fi
 
-# Define quality categories
-declare -A QUALITY_THRESHOLDS=(
-    ["high_min_comp"]=90
-    ["high_max_cont"]=5
-    ["medium_min_comp"]=50
-    ["medium_max_cont"]=10
-)
+# Output directory for this treatment
+OUTPUT_COLLECTION_DIR="${OUTPUT_DIR}/bin_collection/${TREATMENT}"
+mkdir -p "$OUTPUT_COLLECTION_DIR"
 
-# Function to find best available bins
-find_best_bins_source() {
-    local sample_name="$1"
-    local treatment="$2"
-    
-    log "Finding best available bins for $sample_name..."
-    
-    # Priority order: MAGpurify > Reassembly > Refinement
-    local sources=(
-        "${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins:MAGpurify purified bins"
-        "${OUTPUT_DIR}/reassembly/${treatment}/${sample_name}/reassembled_bins:Reassembled bins"
-        "${OUTPUT_DIR}/bin_refinement/${treatment}/${sample_name}/metawrap_50_10_bins:Refined bins"
-    )
-    
-    for source_info in "${sources[@]}"; do
-        IFS=':' read -r bins_dir source_name <<< "$source_info"
-        
-        if [ -d "$bins_dir" ] && [ "$(ls -A "$bins_dir"/*.fa 2>/dev/null)" ]; then
-            local bin_count=$(ls -1 "$bins_dir"/*.fa 2>/dev/null | wc -l)
-            log "  Found $bin_count bins from: $source_name"
-            log "  Using bins from: $bins_dir"
-            echo "$bins_dir|$source_name"
+# Function to collect selected bins from stage 7.5
+collect_selected_bins() {
+    local treatment="$1"
+    local output_dir="$2"
+
+    log "Collecting selected bins for treatment $treatment..."
+
+    # Source directory from stage 7.5 (bin selection)
+    local selected_bins_dir="${OUTPUT_DIR}/selected_bins/${treatment}"
+
+    if [ ! -d "$selected_bins_dir" ]; then
+        log "ERROR: Selected bins directory not found: $selected_bins_dir"
+        log "  Stage 7.5 (bin selection) must be run before bin collection"
+        return 1
+    fi
+
+    # Count available bins
+    local bin_count=$(ls -1 "$selected_bins_dir"/*.fa 2>/dev/null | wc -l)
+
+    if [ $bin_count -eq 0 ]; then
+        log "ERROR: No selected bins found in $selected_bins_dir"
+        return 1
+    fi
+
+    log "  Found $bin_count selected bins"
+
+    # Create output directory for collected bins
+    local collected_bins_dir="${output_dir}/selected_bins"
+    mkdir -p "$collected_bins_dir"
+
+    # Copy selected bins to collection directory
+    log "  Copying selected bins to: $collected_bins_dir"
+    cp -v "$selected_bins_dir"/*.fa "$collected_bins_dir/" 2>&1 | head -20
+
+    local copied_count=$(ls -1 "$collected_bins_dir"/*.fa 2>/dev/null | wc -l)
+    log "  Successfully copied $copied_count bins"
+
+    if [ $copied_count -ne $bin_count ]; then
+        log "WARNING: Copied count ($copied_count) doesn't match expected ($bin_count)"
+    fi
+
+    echo "$collected_bins_dir|$copied_count"
+    return 0
+}
+
+# Function to get all samples for a treatment
+get_samples_for_treatment() {
+    local treatment="$1"
+
+    log "Finding samples for treatment $treatment..."
+
+    # Read samples file and filter by treatment
+    local samples=()
+    while IFS='|' read -r sample_name sample_treatment _ _; do
+        if [ "$sample_treatment" = "$treatment" ]; then
+            samples+=("$sample_name")
+        fi
+    done < <(get_samples)
+
+    if [ ${#samples[@]} -eq 0 ]; then
+        log "ERROR: No samples found for treatment $treatment"
+        return 1
+    fi
+
+    log "  Found ${#samples[@]} samples: ${samples[*]}"
+
+    # Return samples as space-separated string
+    echo "${samples[@]}"
+    return 0
+}
+
+# Function to consolidate CoverM abundance files
+consolidate_coverm_abundance() {
+    local treatment="$1"
+    local samples_str="$2"
+    local output_dir="$3"
+
+    log "Consolidating CoverM abundance data for treatment $treatment..."
+
+    # Convert samples string to array
+    local samples=($samples_str)
+
+    # Output file
+    local consolidated_file="${output_dir}/coverm_abundance_consolidated.tsv"
+
+    # Create Python script for consolidation
+    local python_script="${TEMP_DIR}/consolidate_coverm.py"
+
+    cat > "$python_script" << 'PYTHON_EOF'
+import sys
+import os
+import pandas as pd
+from collections import defaultdict
+
+treatment = sys.argv[1]
+output_dir = sys.argv[2]
+samples = sys.argv[3:]
+
+print(f"Consolidating CoverM data for treatment: {treatment}")
+print(f"Samples: {', '.join(samples)}")
+
+# Dictionary to store abundance data: bin_name -> {sample_name: abundance}
+bin_abundances = defaultdict(dict)
+all_bins = set()
+
+# Process each sample's CoverM file
+for sample in samples:
+    coverm_file = f"{output_dir}/coverm/{treatment}/{sample}/abundance.tsv"
+
+    if not os.path.exists(coverm_file):
+        print(f"WARNING: CoverM file not found for sample {sample}: {coverm_file}")
+        continue
+
+    print(f"Reading: {coverm_file}")
+
+    try:
+        # Read CoverM abundance file
+        df = pd.read_csv(coverm_file, sep='\t')
+
+        # Find the relative abundance column
+        rel_abund_col = None
+        for col in df.columns:
+            if 'Relative Abundance' in col or 'relative_abundance' in col.lower():
+                rel_abund_col = col
+                break
+
+        if rel_abund_col is None:
+            print(f"WARNING: No relative abundance column found in {coverm_file}")
+            # Try to use second column as fallback
+            if len(df.columns) >= 2:
+                rel_abund_col = df.columns[1]
+                print(f"  Using column '{rel_abund_col}' as abundance")
+            else:
+                continue
+
+        # Extract bin names and abundances
+        for _, row in df.iterrows():
+            bin_name = str(row.iloc[0]).strip()
+
+            # Skip unmapped reads
+            if bin_name.lower() == 'unmapped' or bin_name == '':
+                continue
+
+            # Remove .fa extension if present
+            bin_name = bin_name.replace('.fa', '')
+
+            # Get abundance value
+            abundance = row[rel_abund_col]
+
+            # Store abundance
+            bin_abundances[bin_name][sample] = abundance
+            all_bins.add(bin_name)
+
+        print(f"  Processed {len(df)} bins from {sample}")
+
+    except Exception as e:
+        print(f"ERROR processing {coverm_file}: {e}")
+        continue
+
+# Create consolidated dataframe
+if not all_bins:
+    print("ERROR: No bins found in any CoverM files")
+    sys.exit(1)
+
+print(f"\nConsolidating {len(all_bins)} bins across {len(samples)} samples...")
+
+# Create rows for dataframe
+rows = []
+for bin_name in sorted(all_bins):
+    row = {'Bin': bin_name}
+    for sample in samples:
+        row[sample] = bin_abundances[bin_name].get(sample, 0.0)
+    rows.append(row)
+
+# Create dataframe
+consolidated_df = pd.DataFrame(rows)
+
+# Save to TSV
+output_file = f"{output_dir}/bin_collection/{treatment}/coverm_abundance_consolidated.tsv"
+consolidated_df.to_csv(output_file, sep='\t', index=False, float_format='%.6f')
+print(f"\nConsolidated abundance table saved to: {output_file}")
+print(f"  Bins (rows): {len(consolidated_df)}")
+print(f"  Samples (columns): {len(samples)}")
+
+# Also save to Excel if openpyxl is available
+try:
+    excel_file = f"{output_dir}/bin_collection/{treatment}/coverm_abundance_consolidated.xlsx"
+    consolidated_df.to_excel(excel_file, index=False, float_format='%.6f')
+    print(f"Excel file saved to: {excel_file}")
+except ImportError:
+    print("Note: openpyxl not available, skipping Excel export")
+except Exception as e:
+    print(f"Warning: Could not save Excel file: {e}")
+
+print("\nFirst 10 rows of consolidated data:")
+print(consolidated_df.head(10).to_string())
+PYTHON_EOF
+
+    # Activate base/default conda environment for Python with pandas
+    log "  Running Python consolidation script..."
+
+    # Try to use pandas - check if available in base environment
+    if python3 -c "import pandas" 2>/dev/null; then
+        python3 "$python_script" "$treatment" "$OUTPUT_DIR" "${samples[@]}" 2>&1 | tee "${LOG_DIR}/${treatment}/coverm_consolidation.log"
+        local exit_code=${PIPESTATUS[0]}
+    else
+        log "ERROR: pandas not available in current Python environment"
+        log "  Attempting to install pandas..."
+        pip3 install pandas openpyxl 2>&1 | tail -20
+
+        python3 "$python_script" "$treatment" "$OUTPUT_DIR" "${samples[@]}" 2>&1 | tee "${LOG_DIR}/${treatment}/coverm_consolidation.log"
+        local exit_code=${PIPESTATUS[0]}
+    fi
+
+    if [ $exit_code -eq 0 ] && [ -f "$consolidated_file" ]; then
+        log "  Successfully consolidated CoverM abundance data"
+
+        # Show summary
+        local bin_count=$(tail -n +2 "$consolidated_file" | wc -l)
+        local sample_count=$(($(head -1 "$consolidated_file" | tr '\t' '\n' | wc -l) - 1))
+        log "  Consolidated table: $bin_count bins × $sample_count samples"
+
+        return 0
+    else
+        log "ERROR: Failed to consolidate CoverM abundance data"
+        return 1
+    fi
+}
+
+# Function to run GTDB-Tk on selected bins
+run_gtdbtk() {
+    local treatment="$1"
+    local bins_dir="$2"
+    local output_dir="$3"
+
+    log "Running GTDB-Tk for treatment $treatment..."
+
+    # GTDB-Tk output directory
+    local gtdbtk_dir="${output_dir}/gtdbtk"
+    mkdir -p "$gtdbtk_dir"
+
+    # Check if already completed
+    if [ -f "${gtdbtk_dir}/gtdbtk.bac120.summary.tsv" ] || [ -f "${gtdbtk_dir}/gtdbtk.ar53.summary.tsv" ]; then
+        log "  GTDB-Tk already completed for $treatment"
+        return 0
+    fi
+
+    # Count bins
+    local bin_count=$(ls -1 "$bins_dir"/*.fa 2>/dev/null | wc -l)
+
+    if [ $bin_count -eq 0 ]; then
+        log "ERROR: No bins found for GTDB-Tk analysis"
+        return 1
+    fi
+
+    log "  Running GTDB-Tk classify_wf on $bin_count bins..."
+
+    # Activate GTDB-Tk environment
+    activate_env gtdbtk
+
+    # Check if GTDB-Tk is available
+    if ! command -v gtdbtk &> /dev/null; then
+        log "ERROR: GTDB-Tk not available in environment"
+        conda deactivate
+        return 1
+    fi
+
+    # Check GTDB-Tk database
+    if [ -z "${GTDBTK_DATA_PATH:-}" ]; then
+        log "ERROR: GTDBTK_DATA_PATH environment variable not set"
+        log "  Please set GTDBTK_DATA_PATH to the location of GTDB-Tk reference data"
+        conda deactivate
+        return 1
+    fi
+
+    if [ ! -d "$GTDBTK_DATA_PATH" ]; then
+        log "ERROR: GTDB-Tk database not found at: $GTDBTK_DATA_PATH"
+        conda deactivate
+        return 1
+    fi
+
+    log "  Using GTDB-Tk database: $GTDBTK_DATA_PATH"
+
+    # Run GTDB-Tk classify workflow
+    log "  Command: gtdbtk classify_wf --genome_dir $bins_dir --out_dir $gtdbtk_dir --extension fa --cpus $SLURM_CPUS_PER_TASK"
+
+    gtdbtk classify_wf \
+        --genome_dir "$bins_dir" \
+        --out_dir "$gtdbtk_dir" \
+        --extension fa \
+        --cpus $SLURM_CPUS_PER_TASK \
+        2>&1 | tee "${LOG_DIR}/${treatment}/gtdbtk.log"
+
+    local exit_code=${PIPESTATUS[0]}
+
+    conda deactivate
+
+    # Check if output was generated
+    if [ $exit_code -eq 0 ]; then
+        # Check for bacterial or archaeal results
+        if [ -f "${gtdbtk_dir}/gtdbtk.bac120.summary.tsv" ] || [ -f "${gtdbtk_dir}/gtdbtk.ar53.summary.tsv" ]; then
+            log "  GTDB-Tk completed successfully"
+
+            # Log summary
+            if [ -f "${gtdbtk_dir}/gtdbtk.bac120.summary.tsv" ]; then
+                local bac_count=$(tail -n +2 "${gtdbtk_dir}/gtdbtk.bac120.summary.tsv" | wc -l)
+                log "    Bacterial genomes classified: $bac_count"
+            fi
+
+            if [ -f "${gtdbtk_dir}/gtdbtk.ar53.summary.tsv" ]; then
+                local ar_count=$(tail -n +2 "${gtdbtk_dir}/gtdbtk.ar53.summary.tsv" | wc -l)
+                log "    Archaeal genomes classified: $ar_count"
+            fi
+
             return 0
+        else
+            log "WARNING: GTDB-Tk completed but no summary files found"
+            return 1
         fi
-    done
-    
-    log "ERROR: No bins found for $sample_name"
-    return 1
-}
-
-# Function to load CheckM2 quality data
-load_checkm2_data() {
-    local sample_name="$1"
-    local treatment="$2"
-    local checkm2_file="${OUTPUT_DIR}/checkm2/${treatment}/${sample_name}/quality_report.tsv"
-    
-    log "Loading CheckM2 quality data for $sample_name..."
-    
-    if [ ! -f "$checkm2_file" ]; then
-        log "WARNING: CheckM2 quality report not found: $checkm2_file"
+    else
+        log "ERROR: GTDB-Tk failed with exit code: $exit_code"
         return 1
     fi
-    
-    # Create temporary quality lookup file
-    local quality_lookup="${TEMP_DIR}/quality_lookup.tsv"
-    
-    # Process CheckM2 file and create lookup
-    awk -F'\t' '
-        NR > 1 && $1 != "" && $2 != "" && $3 != "" {
-            bin_name = $1
-            gsub(/\.fa$/, "", bin_name)  # Remove .fa extension
-            completeness = $2
-            contamination = $3
-            strain_het = $4
-            gc = $7
-            genome_size = $8
-            n50 = $9
-            taxonomy = $12
-            
-            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", 
-                   bin_name, completeness, contamination, strain_het, gc, genome_size, n50, taxonomy
-        }
-    ' "$checkm2_file" > "$quality_lookup"
-    
-    local quality_bins=$(wc -l < "$quality_lookup")
-    log "  Loaded quality data for $quality_bins bins"
-    
-    if [ $quality_bins -eq 0 ]; then
-        log "WARNING: No quality data found"
-        return 1
-    fi
-    
-    echo "$quality_lookup"
-    return 0
 }
 
-# Function to load CoverM abundance data
-load_coverm_data() {
-    local sample_name="$1"
-    local treatment="$2"
-    local coverm_file="${OUTPUT_DIR}/coverm/${treatment}/${sample_name}/abundance.tsv"
-    
-    log "Loading CoverM abundance data for $sample_name..."
-    
-    if [ ! -f "$coverm_file" ]; then
-        log "WARNING: CoverM abundance file not found: $coverm_file"
-        return 1
-    fi
-    
-    # Create temporary abundance lookup file
-    local abundance_lookup="${TEMP_DIR}/abundance_lookup.tsv"
-    
-    # Process CoverM file and create lookup
-    awk -F'\t' '
-        NR == 1 {
-            # Find column indices
-            for (i = 2; i <= NF; i++) {
-                if ($i ~ /Relative Abundance/) rel_col = i
-                if ($i ~ /Mean/) mean_col = i
-                if ($i ~ /TPM/) tpm_col = i
-                if ($i ~ /Covered Fraction/) cov_col = i
-            }
-        }
-        NR > 1 && $1 != "" && $1 != "unmapped" {
-            bin_name = $1
-            gsub(/\.fa$/, "", bin_name)  # Remove .fa extension
-            
-            rel_abund = (rel_col ? $rel_col : 0)
-            mean_cov = (mean_col ? $mean_col : 0)
-            tpm = (tpm_col ? $tpm_col : 0)
-            cov_frac = (cov_col ? $cov_col : 0)
-            
-            printf "%s\t%s\t%s\t%s\t%s\n", bin_name, rel_abund, mean_cov, tpm, cov_frac
-        }
-    ' "$coverm_file" > "$abundance_lookup"
-    
-    local abundance_bins=$(wc -l < "$abundance_lookup")
-    log "  Loaded abundance data for $abundance_bins bins"
-    
-    if [ $abundance_bins -eq 0 ]; then
-        log "WARNING: No abundance data found"
-        return 1
-    fi
-    
-    echo "$abundance_lookup"
-    return 0
-}
-
-# Function to categorize and collect bins
-categorize_and_collect_bins() {
-    local sample_name="$1"
-    local treatment="$2"
-    local bins_dir="$3"
-    local bins_source="$4"
-    local quality_lookup="$5"
-    local abundance_lookup="$6"
-    local output_dir="$7"
-    
-    log "Categorizing and collecting bins for $sample_name..."
-    
-    # Create output directories
-    mkdir -p "${output_dir}/high_quality"
-    mkdir -p "${output_dir}/medium_quality"
-    mkdir -p "${output_dir}/low_quality"
-    mkdir -p "${output_dir}/all_bins"
-    
-    # Create summary files
-    local all_bins_summary="${output_dir}/all_bins_summary.tsv"
-    local hq_summary="${output_dir}/high_quality_bins_summary.tsv"
-    local mq_summary="${output_dir}/medium_quality_bins_summary.tsv"
-    local lq_summary="${output_dir}/low_quality_bins_summary.tsv"
-    
-    # Header for summary files
-    local header="Sample\tBin\tBin_Source\tCompleteness\tContamination\tStrain_Het\tGC\tGenome_Size\tN50\tTaxonomy\tQuality_Category\tRelative_Abundance\tMean_Coverage\tTPM\tCovered_Fraction"
-    
-    echo -e "$header" > "$all_bins_summary"
-    echo -e "$header" > "$hq_summary"
-    echo -e "$header" > "$mq_summary"
-    echo -e "$header" > "$lq_summary"
-    
-    # Initialize counters
-    local total_bins=0
-    local hq_bins=0
-    local mq_bins=0
-    local lq_bins=0
-    
-    # Process each bin
-    for bin_file in "$bins_dir"/*.fa; do
-        if [ ! -f "$bin_file" ]; then
-            continue
-        fi
-        
-        local bin_filename=$(basename "$bin_file")
-        local bin_name=$(basename "$bin_file" .fa)
-        ((total_bins++))
-        
-        log "  Processing bin: $bin_name"
-        
-        # Get quality data
-        local quality_data="NA\tNA\tNA\tNA\tNA\tNA\tNA"
-        local quality_category="Unknown"
-        
-        if [ -f "$quality_lookup" ]; then
-            local quality_line=$(grep "^${bin_name}\t" "$quality_lookup" | head -1)
-            if [ -n "$quality_line" ]; then
-                quality_data="$quality_line"
-                
-                # Extract completeness and contamination for categorization
-                local completeness=$(echo "$quality_line" | cut -f2)
-                local contamination=$(echo "$quality_line" | cut -f3)
-                
-                # Categorize quality
-                if [ "$completeness" != "NA" ] && [ "$contamination" != "NA" ]; then
-                    if (( $(echo "$completeness >= ${QUALITY_THRESHOLDS[high_min_comp]}" | bc -l) )) && \
-                       (( $(echo "$contamination <= ${QUALITY_THRESHOLDS[high_max_cont]}" | bc -l) )); then
-                        quality_category="High_Quality"
-                        ((hq_bins++))
-                    elif (( $(echo "$completeness >= ${QUALITY_THRESHOLDS[medium_min_comp]}" | bc -l) )) && \
-                         (( $(echo "$contamination <= ${QUALITY_THRESHOLDS[medium_max_cont]}" | bc -l) )); then
-                        quality_category="Medium_Quality"
-                        ((mq_bins++))
-                    else
-                        quality_category="Low_Quality"
-                        ((lq_bins++))
-                    fi
-                fi
-            fi
-        fi
-        
-        # Get abundance data
-        local abundance_data="NA\tNA\tNA\tNA"
-        if [ -f "$abundance_lookup" ]; then
-            local abundance_line=$(grep "^${bin_name}\t" "$abundance_lookup" | head -1)
-            if [ -n "$abundance_line" ]; then
-                abundance_data=$(echo "$abundance_line" | cut -f2-5)
-            fi
-        fi
-        
-        # Create new bin name with sample prefix
-        local new_bin_name="${treatment}_${sample_name}_${bin_name}.fa"
-        
-        # Copy bin to appropriate directories
-        case "$quality_category" in
-            "High_Quality")
-                cp "$bin_file" "${output_dir}/high_quality/${new_bin_name}"
-                ;;
-            "Medium_Quality")
-                cp "$bin_file" "${output_dir}/medium_quality/${new_bin_name}"
-                ;;
-            *)
-                cp "$bin_file" "${output_dir}/low_quality/${new_bin_name}"
-                ;;
-        esac
-        
-        # Always copy to all_bins
-        cp "$bin_file" "${output_dir}/all_bins/${new_bin_name}"
-        
-        # Create summary line
-        local summary_line="${sample_name}\t${bin_name}\t${bins_source}\t${quality_data}\t${quality_category}\t${abundance_data}"
-        
-        # Add to appropriate summary files
-        echo -e "$summary_line" >> "$all_bins_summary"
-        
-        case "$quality_category" in
-            "High_Quality")
-                echo -e "$summary_line" >> "$hq_summary"
-                ;;
-            "Medium_Quality")
-                echo -e "$summary_line" >> "$mq_summary"
-                ;;
-            *)
-                echo -e "$summary_line" >> "$lq_summary"
-                ;;
-        esac
-        
-        log "    Category: $quality_category"
-    done
-    
-    log "Bin collection complete for $sample_name:"
-    log "  Total bins: $total_bins"
-    log "  High-quality bins: $hq_bins"
-    log "  Medium-quality bins: $mq_bins"
-    log "  Low-quality bins: $lq_bins"
-    
-    # Store results for later use
-    echo "$total_bins|$hq_bins|$mq_bins|$lq_bins"
-    return 0
-}
-
-# Function to create merged FASTA files
-create_merged_fastas() {
-    local sample_name="$1"
-    local treatment="$2"
-    local output_dir="$3"
-    
-    log "Creating merged FASTA files for $sample_name..."
-    
-    for quality in high_quality medium_quality low_quality all_bins; do
-        local merged_file="${output_dir}/${quality}_merged.fa"
-        > "$merged_file"
-        
-        local count=0
-        for bin_file in "${output_dir}/${quality}"/*.fa; do
-            if [ -f "$bin_file" ] && [[ "$(basename "$bin_file")" != *"_merged.fa" ]]; then
-                # Add sample prefix to sequence headers
-                awk -v sample="$sample_name" -v bin="$(basename "$bin_file" .fa)" '
-                    /^>/ { 
-                        print ">" sample "_" bin "_" substr($0, 2)
-                        next 
-                    } 
-                    { print }
-                ' "$bin_file" >> "$merged_file"
-                ((count++))
-            fi
-        done
-        
-        log "  Created ${quality}_merged.fa with $count bins"
-    done
-}
-
-# Function to create HTML report
-create_html_report() {
-    local sample_name="$1"
-    local treatment="$2"
-    local output_dir="$3"
-    local total_bins="$4"
-    local hq_bins="$5"
-    local mq_bins="$6"
-    local lq_bins="$7"
-    
-    log "Creating HTML report for $sample_name..."
-    
-    local html_file="${output_dir}/bin_collection_report.html"
-    local all_bins_summary="${output_dir}/all_bins_summary.tsv"
-    
-    cat > "$html_file" << EOF
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Bin Collection Report - $sample_name ($treatment)</title>
-    <style>
-        body { 
-            font-family: Arial, sans-serif; 
-            margin: 20px;
-            background-color: #f5f5f5;
-        }
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            background-color: white;
-            padding: 20px;
-            box-shadow: 0 0 10px rgba(0,0,0,0.1);
-        }
-        h1 { 
-            color: #2c3e50;
-            text-align: center;
-            padding-bottom: 20px;
-            border-bottom: 2px solid #3498db;
-        }
-        .summary-stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin: 20px 0;
-            padding: 20px;
-            background-color: #f8f9fa;
-            border-radius: 5px;
-        }
-        .stat-box {
-            text-align: center;
-            padding: 15px;
-            background-color: white;
-            border-radius: 5px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .stat-number {
-            font-size: 2.5em;
-            font-weight: bold;
-            color: #3498db;
-        }
-        .stat-label {
-            color: #7f8c8d;
-            margin-top: 5px;
-        }
-        .high { color: #27ae60; font-weight: bold; }
-        .medium { color: #f39c12; font-weight: bold; }
-        .low { color: #e74c3c; font-weight: bold; }
-        table { 
-            border-collapse: collapse; 
-            width: 100%; 
-            margin-top: 20px; 
-        }
-        th, td { 
-            text-align: left; 
-            padding: 8px; 
-            border: 1px solid #ddd; 
-            font-size: 0.9em;
-        }
-        th { 
-            background-color: #3498db;
-            color: white;
-            font-weight: bold;
-            cursor: pointer;
-        }
-        tr:nth-child(even) { background-color: #f9f9f9; }
-        tr:hover { background-color: #f1f1f1; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Bin Collection Report</h1>
-        <h2>$sample_name ($treatment)</h2>
-        
-        <div class="summary-stats">
-            <div class="stat-box">
-                <div class="stat-number">$total_bins</div>
-                <div class="stat-label">Total Bins</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-number">$hq_bins</div>
-                <div class="stat-label">High Quality</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-number">$mq_bins</div>
-                <div class="stat-label">Medium Quality</div>
-            </div>
-            <div class="stat-box">
-                <div class="stat-number">$lq_bins</div>
-                <div class="stat-label">Low Quality</div>
-            </div>
-        </div>
-        
-        <h3>Quality Definitions</h3>
-        <ul>
-            <li><strong>High Quality:</strong> ≥90% complete, ≤5% contamination</li>
-            <li><strong>Medium Quality:</strong> ≥50% complete, ≤10% contamination</li>
-            <li><strong>Low Quality:</strong> All other bins</li>
-        </ul>
-        
-        <table id="binTable">
-            <thead>
-                <tr>
-                    <th>Bin Name</th>
-                    <th>Completeness (%)</th>
-                    <th>Contamination (%)</th>
-                    <th>GC (%)</th>
-                    <th>Size (bp)</th>
-                    <th>N50</th>
-                    <th>Quality</th>
-                    <th>Rel. Abundance (%)</th>
-                    <th>Mean Coverage</th>
-                </tr>
-            </thead>
-            <tbody>
-EOF
-    
-    # Add table rows from summary file
-    if [ -f "$all_bins_summary" ]; then
-        tail -n +2 "$all_bins_summary" | while IFS=$'\t' read -r sample bin bin_source completeness contamination strain_het gc genome_size n50 taxonomy quality_category rel_abund mean_cov tpm cov_frac; do
-            # Format numbers
-            local comp_fmt=$(printf "%.1f" "$completeness" 2>/dev/null || echo "$completeness")
-            local cont_fmt=$(printf "%.1f" "$contamination" 2>/dev/null || echo "$contamination")
-            local gc_fmt=$(printf "%.1f" "$gc" 2>/dev/null || echo "$gc")
-            local size_fmt=$(printf "%'d" "$genome_size" 2>/dev/null || echo "$genome_size")
-            local n50_fmt=$(printf "%'d" "$n50" 2>/dev/null || echo "$n50")
-            local abund_fmt=$(printf "%.3f" "$rel_abund" 2>/dev/null || echo "$rel_abund")
-            local cov_fmt=$(printf "%.2f" "$mean_cov" 2>/dev/null || echo "$mean_cov")
-            
-            # Quality class
-            local quality_class=""
-            case "$quality_category" in
-                "High_Quality") quality_class="high" ;;
-                "Medium_Quality") quality_class="medium" ;;
-                *) quality_class="low" ;;
-            esac
-            
-            cat >> "$html_file" << TABLEROW
-                <tr>
-                    <td>$bin</td>
-                    <td>$comp_fmt</td>
-                    <td>$cont_fmt</td>
-                    <td>$gc_fmt</td>
-                    <td>$size_fmt</td>
-                    <td>$n50_fmt</td>
-                    <td><span class="$quality_class">$quality_category</span></td>
-                    <td>$abund_fmt</td>
-                    <td>$cov_fmt</td>
-                </tr>
-TABLEROW
-        done
-    fi
-    
-    cat >> "$html_file" << EOF
-            </tbody>
-        </table>
-    </div>
-    
-    <script>
-        // Add sorting functionality
-        document.querySelectorAll('th').forEach(header => {
-            header.addEventListener('click', () => {
-                const table = document.getElementById('binTable');
-                const rows = Array.from(table.rows).slice(1);
-                const index = Array.from(header.parentNode.children).indexOf(header);
-                const ascending = header.classList.contains('asc');
-                
-                rows.sort((a, b) => {
-                    const aVal = a.cells[index].textContent.replace(/[^0-9.-]/g, '') || a.cells[index].textContent;
-                    const bVal = b.cells[index].textContent.replace(/[^0-9.-]/g, '') || b.cells[index].textContent;
-                    
-                    if (!isNaN(aVal) && !isNaN(bVal)) {
-                        return ascending ? aVal - bVal : bVal - aVal;
-                    }
-                    return ascending ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-                });
-                
-                header.classList.toggle('asc');
-                const tbody = table.querySelector('tbody');
-                tbody.innerHTML = '';
-                rows.forEach(row => tbody.appendChild(row));
-            });
-        });
-    </script>
-</body>
-</html>
-EOF
-    
-    log "HTML report created: $html_file"
-}
-
-# Function to create summary report
+# Function to create consolidated summary report
 create_summary_report() {
-    local sample_name="$1"
-    local treatment="$2"
-    local output_dir="$3"
-    local bins_source="$4"
-    local total_bins="$5"
-    local hq_bins="$6"
-    local mq_bins="$7"
-    local lq_bins="$8"
-    
+    local treatment="$1"
+    local output_dir="$2"
+    local bin_count="$3"
+    local sample_count="$4"
+
+    log "Creating summary report for treatment $treatment..."
+
     local summary_file="${output_dir}/collection_summary.txt"
-    
+
     cat > "$summary_file" << EOF
-Bin Collection Summary for $sample_name
-======================================
+Bin Collection Summary for Treatment: $treatment
+================================================
 
 Date: $(date)
-Sample: $sample_name
 Treatment: $treatment
-Bins Source: $bins_source
-
-Quality Distribution:
-- High-quality bins (≥90% complete, ≤5% contamination): $hq_bins
-- Medium-quality bins (≥50% complete, ≤10% contamination): $mq_bins
-- Low-quality bins: $lq_bins
-- Total bins: $total_bins
-
-Quality Percentages:
-EOF
-    
-    if [ $total_bins -gt 0 ]; then
-        local hq_pct=$(echo "scale=1; $hq_bins * 100 / $total_bins" | bc -l)
-        local mq_pct=$(echo "scale=1; $mq_bins * 100 / $total_bins" | bc -l)
-        local lq_pct=$(echo "scale=1; $lq_bins * 100 / $total_bins" | bc -l)
-        
-        echo "- High-quality: ${hq_pct}%" >> "$summary_file"
-        echo "- Medium-quality: ${mq_pct}%" >> "$summary_file"
-        echo "- Low-quality: ${lq_pct}%" >> "$summary_file"
-    fi
-    
-    cat >> "$summary_file" << EOF
+Number of samples: $sample_count
+Number of selected bins: $bin_count
 
 Output Files:
-- All bins: ${output_dir}/all_bins/
-- High-quality bins: ${output_dir}/high_quality/
-- Medium-quality bins: ${output_dir}/medium_quality/
-- Low-quality bins: ${output_dir}/low_quality/
-- Summary files: ${output_dir}/*_summary.tsv
-- HTML report: ${output_dir}/bin_collection_report.html
-- Merged FASTA files: ${output_dir}/*_merged.fa
+-------------
+1. Selected bins directory:
+   ${output_dir}/selected_bins/
+   - Contains all high-quality bins selected in stage 7.5
 
-Data Integration:
-- CheckM2 quality assessment: $([ -f "${OUTPUT_DIR}/checkm2/${treatment}/${sample_name}/quality_report.tsv" ] && echo "Available" || echo "Not available")
-- CoverM abundance data: $([ -f "${OUTPUT_DIR}/coverm/${treatment}/${sample_name}/abundance.tsv" ] && echo "Available" || echo "Not available")
+2. Consolidated CoverM abundance table:
+   ${output_dir}/coverm_abundance_consolidated.tsv
+   ${output_dir}/coverm_abundance_consolidated.xlsx
+   - Bins as rows, samples as columns
+   - Values represent relative abundance (%)
+
+3. GTDB-Tk taxonomic classification:
+   ${output_dir}/gtdbtk/
+   - gtdbtk.bac120.summary.tsv (bacterial genomes)
+   - gtdbtk.ar53.summary.tsv (archaeal genomes)
+   - Full classification results and phylogenetic trees
+
+Processing Details:
+-------------------
+- Selected bins source: ${OUTPUT_DIR}/selected_bins/${treatment}/
+- CoverM data sources: ${OUTPUT_DIR}/coverm/${treatment}/[samples]/
+- GTDB-Tk database: ${GTDBTK_DATA_PATH:-Not set}
+
+Quality Standards (from stage 7.5):
+-----------------------------------
+Bins were selected based on the best version (orig/strict/permissive)
+according to quality score: Completeness - (5 × Contamination)
 
 EOF
-    
+
+    # Add GTDB-Tk summary if available
+    if [ -f "${output_dir}/gtdbtk/gtdbtk.bac120.summary.tsv" ]; then
+        local bac_count=$(tail -n +2 "${output_dir}/gtdbtk/gtdbtk.bac120.summary.tsv" | wc -l)
+        echo "Bacterial genomes classified: $bac_count" >> "$summary_file"
+    fi
+
+    if [ -f "${output_dir}/gtdbtk/gtdbtk.ar53.summary.tsv" ]; then
+        local ar_count=$(tail -n +2 "${output_dir}/gtdbtk/gtdbtk.ar53.summary.tsv" | wc -l)
+        echo "Archaeal genomes classified: $ar_count" >> "$summary_file"
+    fi
+
     log "Summary report created: $summary_file"
 }
 
 # Main processing function
 stage_bin_collection() {
-    local sample_name="$1"
-    local treatment="$2"
-    
-    log "Running bin collection for $sample_name ($treatment)"
-    
-    local output_dir="${OUTPUT_DIR}/bin_collection/${treatment}/${sample_name}"
-    mkdir -p "$output_dir"
-    
-    # Check if already processed
-    if [ -f "${output_dir}/collection_complete.flag" ]; then
-        log "Sample $sample_name already processed, skipping..."
-        return 0
-    fi
-    
-    # Find best available bins
-    local bins_info=$(find_best_bins_source "$sample_name" "$treatment")
+    local treatment="$1"
+
+    log "Running bin collection for treatment $treatment"
+
+    # Step 1: Collect selected bins from stage 7.5
+    local bins_info=$(collect_selected_bins "$treatment" "$OUTPUT_COLLECTION_DIR")
     if [ $? -ne 0 ]; then
-        log "ERROR: No bins found for $sample_name"
+        log "ERROR: Failed to collect selected bins"
         return 1
     fi
-    
-    IFS='|' read -r bins_dir bins_source <<< "$bins_info"
-    
-    # Load quality and abundance data
-    local quality_lookup=$(load_checkm2_data "$sample_name" "$treatment")
-    local abundance_lookup=$(load_coverm_data "$sample_name" "$treatment")
-    
-    # Categorize and collect bins
-    local results=$(categorize_and_collect_bins "$sample_name" "$treatment" "$bins_dir" "$bins_source" "$quality_lookup" "$abundance_lookup" "$output_dir")
+
+    IFS='|' read -r collected_bins_dir bin_count <<< "$bins_info"
+
+    # Step 2: Get all samples for this treatment
+    local samples=$(get_samples_for_treatment "$treatment")
     if [ $? -ne 0 ]; then
-        log "ERROR: Failed to categorize and collect bins"
+        log "ERROR: Failed to get samples for treatment"
         return 1
     fi
-    
-    IFS='|' read -r total_bins hq_bins mq_bins lq_bins <<< "$results"
-    
-    # Create merged FASTA files
-    create_merged_fastas "$sample_name" "$treatment" "$output_dir"
-    
-    # Create reports
-    create_html_report "$sample_name" "$treatment" "$output_dir" "$total_bins" "$hq_bins" "$mq_bins" "$lq_bins"
-    create_summary_report "$sample_name" "$treatment" "$output_dir" "$bins_source" "$total_bins" "$hq_bins" "$mq_bins" "$lq_bins"
-    
-    # Create completion flag
-    touch "${output_dir}/collection_complete.flag"
-    
-    log "Bin collection completed for $sample_name"
+
+    local sample_count=$(echo "$samples" | wc -w)
+
+    # Step 3: Consolidate CoverM abundance data
+    if ! consolidate_coverm_abundance "$treatment" "$samples" "$OUTPUT_DIR"; then
+        log "ERROR: Failed to consolidate CoverM abundance data"
+        return 1
+    fi
+
+    # Step 4: Run GTDB-Tk on selected bins
+    if ! run_gtdbtk "$treatment" "$collected_bins_dir" "$OUTPUT_COLLECTION_DIR"; then
+        log "ERROR: Failed to run GTDB-Tk"
+        return 1
+    fi
+
+    # Step 5: Create summary report
+    create_summary_report "$treatment" "$OUTPUT_COLLECTION_DIR" "$bin_count" "$sample_count"
+
+    log "Bin collection completed for treatment $treatment"
     return 0
 }
 
 # Validation function
 validate_bin_collection() {
-    local sample_name="$1"
-    local treatment="$2"
-    local output_dir="${OUTPUT_DIR}/bin_collection/${treatment}/${sample_name}"
-    
-    # Check completion flag
-    if [ ! -f "${output_dir}/collection_complete.flag" ]; then
+    local treatment="$1"
+    local output_dir="${OUTPUT_DIR}/bin_collection/${treatment}"
+
+    log "Validating bin collection for treatment $treatment..."
+
+    # Check that selected bins directory exists and has bins
+    if [ ! -d "${output_dir}/selected_bins" ] || [ ! "$(ls -A "${output_dir}/selected_bins"/*.fa 2>/dev/null)" ]; then
+        log "Validation failed: No selected bins found"
         return 1
     fi
-    
-    # Check that output directories exist
-    for dir in all_bins high_quality medium_quality low_quality; do
-        if [ ! -d "${output_dir}/${dir}" ]; then
-            return 1
-        fi
-    done
-    
-    # Check that we have at least one bin
-    if [ ! "$(ls -A "${output_dir}/all_bins/"*.fa 2>/dev/null)" ]; then
+
+    # Check that consolidated abundance file exists
+    if [ ! -f "${output_dir}/coverm_abundance_consolidated.tsv" ]; then
+        log "Validation failed: Consolidated abundance file not found"
         return 1
     fi
-    
-    # Check that summary files exist
-    if [ ! -f "${output_dir}/all_bins_summary.tsv" ]; then
+
+    # Check that GTDB-Tk results exist (at least one of bacterial or archaeal)
+    if [ ! -f "${output_dir}/gtdbtk/gtdbtk.bac120.summary.tsv" ] && [ ! -f "${output_dir}/gtdbtk/gtdbtk.ar53.summary.tsv" ]; then
+        log "Validation failed: GTDB-Tk results not found"
         return 1
     fi
-    
+
+    log "Validation successful"
     return 0
 }
 
 # Run the bin collection stage
-if stage_bin_collection "$SAMPLE_NAME" "$TREATMENT"; then
+if stage_bin_collection "$TREATMENT"; then
     # Validate results
-    if validate_bin_collection "$SAMPLE_NAME" "$TREATMENT"; then
-        create_sample_checkpoint "$SAMPLE_NAME" "bin_collection"
-        log "====== Bin collection completed for $SAMPLE_NAME ======"
+    if validate_bin_collection "$TREATMENT"; then
+        create_treatment_checkpoint "$TREATMENT" "bin_collection"
+        log "====== Bin collection completed successfully for treatment $TREATMENT ======"
     else
-        log "ERROR: Bin collection validation failed for $SAMPLE_NAME"
+        log "ERROR: Bin collection validation failed for treatment $TREATMENT"
+        cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
 else
-    log "ERROR: Bin collection stage failed for $SAMPLE_NAME"
+    log "ERROR: Bin collection stage failed for treatment $TREATMENT"
     cleanup_temp_dir "$TEMP_DIR"
     exit 1
 fi

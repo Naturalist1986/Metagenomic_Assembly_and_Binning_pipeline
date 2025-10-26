@@ -73,7 +73,7 @@ STAGES:
   7.5  - Bin Selection (selects best reassembly version per bin)
     8  - MetaWRAP Quant (quantifies refined bins before reassembly)
     9  - CoverM (per-sample abundance calculation)
-   10  - Bin Collection
+   10  - Bin Collection (per treatment: consolidate CoverM abundance, run GTDB-Tk)
    11  - Combined Report
    12  - Final Report
 
@@ -357,7 +357,7 @@ declare -A STAGE_NAMES=(
     [7.5]="Bin Selection"
     [8]="MetaWRAP Quant"
     [9]="CoverM"
-    [10]="Bin Collection"
+    [10]="Bin Collection (per treatment: consolidate abundance, GTDB-Tk)"
     [11]="Combined Report"
     [12]="Final Report"
 )
