@@ -235,24 +235,27 @@ EOF
     for base_bin in "${base_bins[@]}"; do
         log "Processing bin: $base_bin"
 
-        # Check which versions exist and get their quality metrics
+        # Check all possible versions and get their quality metrics
+        # Note: base name (no suffix) and .orig are DIFFERENT versions with potentially different stats
+
+        # Version 1: Base name (no suffix)
+        local base_quality=$(get_bin_quality "$checkm2_report" "${base_bin}")
+        local base_exists=$?
+
+        # Version 2: .orig suffix
         local orig_quality=$(get_bin_quality "$checkm2_report" "${base_bin}.orig")
         local orig_exists=$?
 
-        # Note: bin without suffix is the same as .orig
-        if [ $orig_exists -ne 0 ]; then
-            orig_quality=$(get_bin_quality "$checkm2_report" "${base_bin}")
-            orig_exists=$?
-        fi
-
+        # Version 3: .strict suffix
         local strict_quality=$(get_bin_quality "$checkm2_report" "${base_bin}.strict")
         local strict_exists=$?
 
+        # Version 4: .permissive suffix
         local permissive_quality=$(get_bin_quality "$checkm2_report" "${base_bin}.permissive")
         local permissive_exists=$?
 
         # Ensure at least one version exists
-        if [ $orig_exists -ne 0 ] && [ $strict_exists -ne 0 ] && [ $permissive_exists -ne 0 ]; then
+        if [ $base_exists -ne 0 ] && [ $orig_exists -ne 0 ] && [ $strict_exists -ne 0 ] && [ $permissive_exists -ne 0 ]; then
             log "  WARNING: No versions found for $base_bin, skipping..."
             continue
         fi
@@ -264,17 +267,37 @@ EOF
         local best_score=-500
         local reason=""
 
+        # Evaluate base version (no suffix)
+        if [ $base_exists -eq 0 ] && [ -n "$base_quality" ]; then
+            IFS='|' read -r comp cont <<< "$base_quality"
+            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l 2>/dev/null)
+            if [ -n "$score" ]; then
+                log "  base (no suffix): completeness=$comp%, contamination=$cont%, score=$score"
+                best_version="base"
+                best_comp="$comp"
+                best_cont="$cont"
+                best_score="$score"
+                reason="Best quality score among available versions"
+            else
+                log "  base (no suffix): FAILED to calculate quality score"
+            fi
+        else
+            log "  base (no suffix): NOT FOUND in CheckM2 report"
+        fi
+
         # Evaluate orig version
         if [ $orig_exists -eq 0 ] && [ -n "$orig_quality" ]; then
             IFS='|' read -r comp cont <<< "$orig_quality"
             local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l 2>/dev/null)
             if [ -n "$score" ]; then
                 log "  orig: completeness=$comp%, contamination=$cont%, score=$score"
-                best_version="orig"
-                best_comp="$comp"
-                best_cont="$cont"
-                best_score="$score"
-                reason="Only version available"
+                if [ -z "$best_version" ] || compare_bin_quality "$comp" "$cont" "$best_comp" "$best_cont"; then
+                    best_version="orig"
+                    best_comp="$comp"
+                    best_cont="$cont"
+                    best_score="$score"
+                    reason="Best quality score among available versions"
+                fi
             else
                 log "  orig: FAILED to calculate quality score"
             fi
@@ -293,7 +316,7 @@ EOF
                     best_comp="$comp"
                     best_cont="$cont"
                     best_score="$score"
-                    reason="Better quality score than other versions"
+                    reason="Best quality score among available versions"
                 fi
             else
                 log "  strict: FAILED to calculate quality score"
@@ -313,7 +336,7 @@ EOF
                     best_comp="$comp"
                     best_cont="$cont"
                     best_score="$score"
-                    reason="Better quality score than other versions"
+                    reason="Best quality score among available versions"
                 fi
             else
                 log "  permissive: FAILED to calculate quality score"
@@ -335,21 +358,25 @@ EOF
 
         # Copy selected bin to output directory
         local source_bin=""
-        if [ "$best_version" = "orig" ]; then
-            # Check for .orig suffix first, then without suffix
+        if [ "$best_version" = "base" ]; then
+            # Base version: bin without any suffix
+            if [ -n "$sample_name" ]; then
+                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/${base_bin}.fa"
+            else
+                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/purified_bins/${base_bin}.fa"
+            fi
+            # Count as orig for summary (it's the non-reassembled version)
+            ((orig_selected++))
+        elif [ "$best_version" = "orig" ]; then
+            # Orig version: bin with .orig suffix
             if [ -n "$sample_name" ]; then
                 source_bin="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/${base_bin}.orig.fa"
-                if [ ! -f "$source_bin" ]; then
-                    source_bin="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/${base_bin}.fa"
-                fi
             else
                 source_bin="${OUTPUT_DIR}/magpurify/${treatment}/purified_bins/${base_bin}.orig.fa"
-                if [ ! -f "$source_bin" ]; then
-                    source_bin="${OUTPUT_DIR}/magpurify/${treatment}/purified_bins/${base_bin}.fa"
-                fi
             fi
             ((orig_selected++))
         elif [ "$best_version" = "strict" ]; then
+            # Strict version: bin with .strict suffix
             if [ -n "$sample_name" ]; then
                 source_bin="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/${base_bin}.strict.fa"
             else
@@ -357,6 +384,7 @@ EOF
             fi
             ((strict_selected++))
         else
+            # Permissive version: bin with .permissive suffix
             if [ -n "$sample_name" ]; then
                 source_bin="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/${base_bin}.permissive.fa"
             else
