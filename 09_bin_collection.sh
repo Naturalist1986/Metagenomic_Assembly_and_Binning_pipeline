@@ -320,15 +320,36 @@ run_gtdbtk() {
 
     log "  Using GTDB-Tk database: $GTDBTK_DATA_PATH"
 
-    # Run GTDB-Tk classify workflow
-    log "  Command: gtdbtk classify_wf --genome_dir $bins_dir --out_dir $gtdbtk_dir --extension fa --cpus $SLURM_CPUS_PER_TASK"
+    # Check for mash database (typically mash_db.msh in the database directory)
+    local mash_db="${GTDBTK_DATA_PATH}/mash_db.msh"
+    if [ ! -f "$mash_db" ]; then
+        log "WARNING: Mash database not found at $mash_db, will skip ANI screen"
+        local skip_ani="--skip_ani_screen"
+    else
+        log "  Using mash database: $mash_db"
+        local skip_ani=""
+    fi
 
-    gtdbtk classify_wf \
-        --genome_dir "$bins_dir" \
-        --out_dir "$gtdbtk_dir" \
-        --extension fa \
-        --cpus $SLURM_CPUS_PER_TASK \
-        2>&1 | tee "${LOG_DIR}/${treatment}/gtdbtk.log"
+    # Run GTDB-Tk classify workflow
+    log "  Command: gtdbtk classify_wf --genome_dir $bins_dir --out_dir $gtdbtk_dir --extension fa ${mash_db:+--mash_db $mash_db} ${skip_ani} --cpus $SLURM_CPUS_PER_TASK"
+
+    if [ -n "$skip_ani" ]; then
+        gtdbtk classify_wf \
+            --genome_dir "$bins_dir" \
+            --out_dir "$gtdbtk_dir" \
+            --extension fa \
+            --skip_ani_screen \
+            --cpus $SLURM_CPUS_PER_TASK \
+            2>&1 | tee "${LOG_DIR}/${treatment}/gtdbtk.log"
+    else
+        gtdbtk classify_wf \
+            --genome_dir "$bins_dir" \
+            --out_dir "$gtdbtk_dir" \
+            --extension fa \
+            --mash_db "$mash_db" \
+            --cpus $SLURM_CPUS_PER_TASK \
+            2>&1 | tee "${LOG_DIR}/${treatment}/gtdbtk.log"
+    fi
 
     local exit_code=${PIPESTATUS[0]}
 
