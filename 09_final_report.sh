@@ -345,7 +345,7 @@ print("Creating simplified taxonomy plots...")
 print("Using most specific taxonomic level for each bin (Species > Genus > Family)")
 print("="*80)
 
-# Plot 1: Per-treatment plots with unmapped
+# Plot 1a: Per-treatment plots with unmapped
 for treatment in treatments:
     treatment_data = df_merged[df_merged['Treatment'] == treatment]
     if not treatment_data.empty:
@@ -353,12 +353,26 @@ for treatment in treatments:
             treatment_data,
             group_by='Sample',
             label_col='Best_Taxonomy_Label',
-            title=f'Bin Abundance by Taxonomy - {treatment}',
-            filename=f'abundance_taxonomy_{treatment}.png',
+            title=f'Bin Abundance by Taxonomy (with unmapped) - {treatment}',
+            filename=f'abundance_taxonomy_unmapped_{treatment}.png',
             include_unmapped=True
         )
 
-# Plot 2: Faceted plot with all treatments (with unmapped)
+# Plot 1b: Per-treatment plots normalized (without unmapped, renormalized to 100%)
+print("\nCreating per-treatment normalized plots (without unmapped)...")
+for treatment in treatments:
+    treatment_data = df_merged[df_merged['Treatment'] == treatment]
+    if not treatment_data.empty:
+        create_stacked_barplot(
+            treatment_data,
+            group_by='Sample',
+            label_col='Best_Taxonomy_Label',
+            title=f'Bin Abundance by Taxonomy (normalized) - {treatment}',
+            filename=f'abundance_taxonomy_normalized_{treatment}.png',
+            include_unmapped=False
+        )
+
+# Plot 2a: Faceted plot with all treatments (with unmapped)
 print("\nCreating faceted plot (all treatments with unmapped)...")
 fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
 
@@ -406,12 +420,60 @@ fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5),
 
 plt.suptitle('Bin Abundance by Taxonomy - All Treatments', fontsize=14, fontweight='bold', y=1.02)
 plt.tight_layout()
-plt.savefig(f"{plots_dir}/abundance_taxonomy_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
-plt.savefig(f"{plots_dir}/abundance_taxonomy_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
-print(f"  Saved PNG: {plots_dir}/abundance_taxonomy_all_treatments_faceted.png")
-print(f"  Saved SVG: {plots_dir}/abundance_taxonomy_all_treatments_faceted.svg")
+plt.savefig(f"{plots_dir}/abundance_taxonomy_unmapped_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
+plt.savefig(f"{plots_dir}/abundance_taxonomy_unmapped_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
+print(f"  Saved PNG: {plots_dir}/abundance_taxonomy_unmapped_all_treatments_faceted.png")
+print(f"  Saved SVG: {plots_dir}/abundance_taxonomy_unmapped_all_treatments_faceted.svg")
 plt.close()
 
+# Plot 2b: Faceted plot with all treatments (normalized, without unmapped)
+print("\nCreating faceted plot (all treatments normalized)...")
+fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
+
+if len(treatments) == 1:
+    axes = [axes]
+
+for idx, treatment in enumerate(treatments):
+    treatment_data = df_merged[df_merged['Treatment'] == treatment]
+
+    # Group and pivot
+    grouped = treatment_data.groupby(['Sample', 'Best_Taxonomy_Label'])['Relative_Abundance'].sum().reset_index()
+    pivot_data = grouped.pivot(index='Sample', columns='Best_Taxonomy_Label', values='Relative_Abundance')
+    pivot_data = pivot_data.fillna(0)
+
+    # Normalize to 100% (no unmapped)
+    row_sums = pivot_data.sum(axis=1)
+    for col in pivot_data.columns:
+        pivot_data[col] = (pivot_data[col] / row_sums * 100).fillna(0)
+
+    # Sort by abundance
+    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False)
+    pivot_data = pivot_data[col_sums.index]
+
+    # Plot with colors
+    colors = sns.color_palette("husl", len(pivot_data.columns))
+    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=colors, width=0.8, legend=False)
+
+    axes[idx].set_title(treatment, fontsize=12, fontweight='bold')
+    axes[idx].set_xlabel('Sample', fontsize=10)
+    axes[idx].set_ylim(0, 100)
+    axes[idx].grid(axis='y', alpha=0.3, linestyle='--')
+    plt.setp(axes[idx].xaxis.get_majorticklabels(), rotation=45, ha='right')
+
+axes[0].set_ylabel('Relative Abundance (%)', fontsize=10, fontweight='bold')
+
+# Create shared legend
+handles, labels = axes[-1].get_legend_handles_labels()
+fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5),
+          frameon=True, fontsize=9, title='Taxonomy')
+
+plt.suptitle('Bin Abundance by Taxonomy (normalized) - All Treatments', fontsize=14, fontweight='bold', y=1.02)
+plt.tight_layout()
+plt.savefig(f"{plots_dir}/abundance_taxonomy_normalized_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
+plt.savefig(f"{plots_dir}/abundance_taxonomy_normalized_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
+print(f"  Saved PNG: {plots_dir}/abundance_taxonomy_normalized_all_treatments_faceted.png")
+print(f"  Saved SVG: {plots_dir}/abundance_taxonomy_normalized_all_treatments_faceted.svg")
+plt.close()
 
 print("\n" + "="*80)
 print("Plot generation complete!")
@@ -419,8 +481,10 @@ print("="*80)
 print(f"\nAll plots saved to: {plots_dir}")
 print("\nGenerated plots:")
 print(f"  - Per-treatment taxonomy plots (with unmapped): {len(treatments)} PNG+SVG")
+print(f"  - Per-treatment taxonomy plots (normalized, no unmapped): {len(treatments)} PNG+SVG")
 print(f"  - Faceted taxonomy plot (all treatments, with unmapped): 1 PNG+SVG")
-print(f"\nTotal plot files: {len(treatments) * 2 + 2} (PNG + SVG formats)")
+print(f"  - Faceted taxonomy plot (all treatments, normalized): 1 PNG+SVG")
+print(f"\nTotal plot files: {len(treatments) * 4 + 4} (PNG + SVG formats)")
 print(f"Plots use most specific taxonomic level for each bin (Species > Genus > Family)")
 PYTHON_EOF
 
@@ -477,15 +541,18 @@ Generated Outputs:
    ${FINAL_REPORT_DIR}/plots/
 
    Per-treatment plots (Taxonomy - PNG + SVG):
-   $(for t in "${treatments[@]}"; do echo "   - abundance_taxonomy_${t}.png/.svg (with unmapped reads)"; done)
+   $(for t in "${treatments[@]}"; do echo "   - abundance_taxonomy_unmapped_${t}.png/.svg (with unmapped reads)"; done)
+   $(for t in "${treatments[@]}"; do echo "   - abundance_taxonomy_normalized_${t}.png/.svg (normalized to 100%, no unmapped)"; done)
 
-   Comparative plot (all treatments - PNG + SVG):
-   - abundance_taxonomy_all_treatments_faceted.png/.svg (with unmapped reads)
+   Comparative plots (all treatments - PNG + SVG):
+   - abundance_taxonomy_unmapped_all_treatments_faceted.png/.svg (with unmapped reads)
+   - abundance_taxonomy_normalized_all_treatments_faceted.png/.svg (normalized to 100%, no unmapped)
 
-   Total: $((${#treatments[@]} * 2 + 2)) plot files (PNG + SVG formats)
+   Total: $((${#treatments[@]} * 4 + 4)) plot files (PNG + SVG formats)
 
    Note: Plots use the most specific taxonomic level available for each bin
-   (Species > Genus > Family)
+   (Species > Genus > Family). Normalized plots show bin abundances
+   renormalized to 100% excluding unmapped reads.
 
 3. Processing Logs:
    ${FINAL_REPORT_DIR}/plotting.log
@@ -493,20 +560,31 @@ Generated Outputs:
 Description of Plots:
 ---------------------
 
-1. Per-treatment plots (taxonomy, with unmapped):
+1. Per-treatment plots with unmapped:
    - Stacked barplots showing bin abundance across samples in each treatment
    - Each bar represents a sample
    - Colors represent different taxonomic groups (most specific level available)
    - Grey bars show unmapped reads: 100% - (sum of all bin abundances in that sample)
    - Y-axis: Relative abundance (%)
+   - Files: abundance_taxonomy_unmapped_{treatment}.png/.svg
 
-2. Faceted plot (all treatments, with unmapped):
+2. Per-treatment plots normalized:
+   - Same as above, but bin abundances renormalized to 100% (excluding unmapped)
+   - Shows relative proportions of identified bins only
+   - No grey unmapped bars
+   - Useful for comparing bin composition when unmapped proportions vary
+   - Files: abundance_taxonomy_normalized_{treatment}.png/.svg
+
+3. Faceted plots (all treatments):
    - Side-by-side comparison of all treatments in one figure
    - Each facet shows one treatment with all its samples
    - Shared legend for easy comparison across treatments
-   - Shows taxonomic composition and unmapped reads for all samples
+   - Two versions: with unmapped and normalized
+   - Files:
+     * abundance_taxonomy_unmapped_all_treatments_faceted.png/.svg
+     * abundance_taxonomy_normalized_all_treatments_faceted.png/.svg
 
-3. File Formats:
+4. File Formats:
    - PNG: High-resolution raster format (300 DPI) - good for presentations/publications
    - SVG: Vector format - scalable, editable in Illustrator/Inkscape
 
