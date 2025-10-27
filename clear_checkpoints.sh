@@ -33,6 +33,20 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/00_config_utilities.sh"
 
+# Initialize checkpoint directory if not set
+if [ -z "$CHECKPOINT_DIR" ]; then
+    CHECKPOINT_DIR="${OUTPUT_DIR}/checkpoints"
+fi
+
+# Ensure TREATMENTS_FILE and SAMPLE_INFO_FILE are set
+if [ -z "$TREATMENTS_FILE" ]; then
+    TREATMENTS_FILE="${OUTPUT_DIR}/treatments.txt"
+fi
+
+if [ -z "$SAMPLE_INFO_FILE" ]; then
+    SAMPLE_INFO_FILE="${OUTPUT_DIR}/sample_info.csv"
+fi
+
 # Initialize variables
 STAGE=""
 TREATMENT=""
@@ -119,21 +133,42 @@ echo "Delete outputs: $DELETE_OUTPUT"
 echo "Clear all: $CLEAR_ALL"
 echo ""
 
-# Determine processing mode based on stage
-# Stages 9 and 10 are treatment-level or single execution
-# Stages -1 through 8 are sample-level (unless in treatment mode)
+# Determine processing mode based on stage and user flags
+# - If user provides -t flag, assume treatment-level
+# - If user provides -n flag, assume sample-level
+# - Otherwise use stage-based detection
 is_treatment_level_stage() {
     local stage="$1"
-    # Stage 9 is treatment-level, stage 10 is single execution
-    if [ "$stage" = "9" ] || [ "$stage" = "10" ]; then
+
+    # If user explicitly provided treatment flag, it's treatment-level
+    if [ -n "$TREATMENT" ]; then
         return 0
     fi
-    # Stages 5-8 are treatment-level if TREATMENT_LEVEL_BINNING is enabled
-    if [ "${TREATMENT_LEVEL_BINNING:-false}" = "true" ]; then
-        case "$stage" in
-            5|6|7|7.5|8) return 0 ;;
-        esac
+
+    # If user explicitly provided sample flag, it's sample-level
+    if [ -n "$SAMPLE_NAME" ]; then
+        return 1
     fi
+
+    # Stage 10 is single execution (neither treatment nor sample level)
+    if [ "$stage" = "10" ]; then
+        return 0
+    fi
+
+    # Stage 9 is always treatment-level
+    if [ "$stage" = "9" ]; then
+        return 0
+    fi
+
+    # Stages 5-8 (including 7.5) are typically treatment-level in modern pipeline
+    # Default to treatment-level for these stages when using -a flag
+    case "$stage" in
+        5|6|7|7.5|8)
+            return 0
+            ;;
+    esac
+
+    # All other stages are sample-level
     return 1
 }
 
@@ -251,12 +286,25 @@ elif is_treatment_level_stage "$STAGE"; then
             done < "$TREATMENTS_FILE"
         else
             echo "ERROR: Treatments file not found: $TREATMENTS_FILE"
+            echo ""
+            echo "The treatments file is created by run_pipeline.sh when you first run the pipeline."
+            echo "If you haven't run the pipeline yet, or if you want to clear a specific treatment,"
+            echo "use: ./clear_checkpoints.sh -s $STAGE -t <treatment_name>"
             exit 1
         fi
     else
         # Clear specific treatment
         if [ -z "$TREATMENT" ]; then
-            echo "ERROR: Treatment name required for treatment-level stage (-t) or use -a for all"
+            echo "ERROR: Treatment name required for treatment-level stage $STAGE"
+            echo ""
+            echo "Usage:"
+            echo "  ./clear_checkpoints.sh -s $STAGE -t <treatment_name>"
+            echo "  ./clear_checkpoints.sh -s $STAGE -a               # Clear all treatments"
+            echo ""
+            if [ -f "$TREATMENTS_FILE" ]; then
+                echo "Available treatments (from $TREATMENTS_FILE):"
+                cat "$TREATMENTS_FILE" | head -20 | sed 's/^/  - /'
+            fi
             exit 1
         fi
 
@@ -286,7 +334,16 @@ else
     else
         # Clear specific sample
         if [ -z "$SAMPLE_NAME" ]; then
-            echo "ERROR: Sample name required for sample-level stage (-n) or use -a for all"
+            echo "ERROR: Sample name required for sample-level stage $STAGE"
+            echo ""
+            echo "Usage:"
+            echo "  ./clear_checkpoints.sh -s $STAGE -n <sample_name>"
+            echo "  ./clear_checkpoints.sh -s $STAGE -a               # Clear all samples"
+            echo ""
+            if [ -f "$SAMPLE_INFO_FILE" ]; then
+                echo "Available samples (from $SAMPLE_INFO_FILE):"
+                awk -F',' 'NR>1 {print $1}' "$SAMPLE_INFO_FILE" | head -20 | sed 's/^/  - /'
+            fi
             exit 1
         fi
 
