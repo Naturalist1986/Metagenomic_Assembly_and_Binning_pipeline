@@ -241,10 +241,14 @@ def get_best_taxonomy(row):
 
 df_merged['Best_Taxonomy_Label'] = df_merged.apply(get_best_taxonomy, axis=1)
 
+# Create unique bin label (Bin_Name - Taxonomy) to prevent merging bins with same taxonomy
+df_merged['Bin_Taxonomy_Label'] = df_merged['Bin'] + ' - ' + df_merged['Best_Taxonomy_Label']
+
 print(f"\nTaxonomy label summary:")
 print(f"  Species-level IDs: {(df_merged['Species'] != 'Unclassified').sum()} bins")
 print(f"  Genus-level IDs: {(df_merged['Genus'] != 'Unclassified').sum()} bins")
 print(f"  Family-level IDs: {(df_merged['Family'] != 'Unclassified').sum()} bins")
+print(f"  Total unique bins: {df_merged['Bin'].nunique()}")
 
 # Save merged data
 merged_file = f"{output_dir}/final_report/merged_abundance_taxonomy.tsv"
@@ -347,26 +351,35 @@ print("="*80)
 
 # Plot 1a: Per-treatment plots with unmapped
 for treatment in treatments:
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
+    treatment_data = df_merged[df_merged['Treatment'] == treatment].copy()
     if not treatment_data.empty:
         create_stacked_barplot(
             treatment_data,
             group_by='Sample',
-            label_col='Best_Taxonomy_Label',
+            label_col='Bin_Taxonomy_Label',
             title=f'Bin Abundance by Taxonomy (with unmapped) - {treatment}',
             filename=f'abundance_taxonomy_unmapped_{treatment}.png',
             include_unmapped=True
         )
 
 # Plot 1b: Per-treatment plots normalized (without unmapped, renormalized to 100%)
-print("\nCreating per-treatment normalized plots (without unmapped)...")
+print("\nCreating per-treatment normalized plots (renormalized to 100%)...")
 for treatment in treatments:
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
+    treatment_data = df_merged[df_merged['Treatment'] == treatment].copy()
     if not treatment_data.empty:
+        # Renormalize abundances to 100% per sample
+        for sample in treatment_data['Sample'].unique():
+            sample_mask = treatment_data['Sample'] == sample
+            total = treatment_data.loc[sample_mask, 'Relative_Abundance'].sum()
+            if total > 0:
+                treatment_data.loc[sample_mask, 'Relative_Abundance'] = (
+                    treatment_data.loc[sample_mask, 'Relative_Abundance'] / total * 100
+                )
+
         create_stacked_barplot(
             treatment_data,
             group_by='Sample',
-            label_col='Best_Taxonomy_Label',
+            label_col='Bin_Taxonomy_Label',
             title=f'Bin Abundance by Taxonomy (normalized) - {treatment}',
             filename=f'abundance_taxonomy_normalized_{treatment}.png',
             include_unmapped=False
@@ -382,9 +395,9 @@ if len(treatments) == 1:
 for idx, treatment in enumerate(treatments):
     treatment_data = df_merged[df_merged['Treatment'] == treatment]
 
-    # Group and pivot
-    grouped = treatment_data.groupby(['Sample', 'Best_Taxonomy_Label'])['Relative_Abundance'].sum().reset_index()
-    pivot_data = grouped.pivot(index='Sample', columns='Best_Taxonomy_Label', values='Relative_Abundance')
+    # Group and pivot - use Bin_Taxonomy_Label to keep bins separate
+    grouped = treatment_data.groupby(['Sample', 'Bin_Taxonomy_Label'])['Relative_Abundance'].sum().reset_index()
+    pivot_data = grouped.pivot(index='Sample', columns='Bin_Taxonomy_Label', values='Relative_Abundance')
     pivot_data = pivot_data.fillna(0)
 
     # Add unmapped reads
@@ -436,9 +449,9 @@ if len(treatments) == 1:
 for idx, treatment in enumerate(treatments):
     treatment_data = df_merged[df_merged['Treatment'] == treatment]
 
-    # Group and pivot
-    grouped = treatment_data.groupby(['Sample', 'Best_Taxonomy_Label'])['Relative_Abundance'].sum().reset_index()
-    pivot_data = grouped.pivot(index='Sample', columns='Best_Taxonomy_Label', values='Relative_Abundance')
+    # Group and pivot - use Bin_Taxonomy_Label to keep bins separate
+    grouped = treatment_data.groupby(['Sample', 'Bin_Taxonomy_Label'])['Relative_Abundance'].sum().reset_index()
+    pivot_data = grouped.pivot(index='Sample', columns='Bin_Taxonomy_Label', values='Relative_Abundance')
     pivot_data = pivot_data.fillna(0)
 
     # Normalize to 100% (no unmapped)
