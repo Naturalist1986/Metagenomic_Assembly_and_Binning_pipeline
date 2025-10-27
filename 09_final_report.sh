@@ -387,6 +387,14 @@ for treatment in treatments:
 
 # Plot 2a: Faceted plot with all treatments (with unmapped)
 print("\nCreating faceted plot (all treatments with unmapped)...")
+
+# First, get all unique bins across ALL treatments and create consistent color mapping
+all_bins = sorted(df_merged['Bin_Taxonomy_Label'].unique())
+n_bins = len(all_bins)
+bin_colors = sns.color_palette("husl", n_bins)
+bin_color_map = {bin_label: bin_colors[i] for i, bin_label in enumerate(all_bins)}
+bin_color_map['Unmapped'] = (0.7, 0.7, 0.7)  # Grey for unmapped
+
 fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
 
 if len(treatments) == 1:
@@ -411,12 +419,10 @@ for idx, treatment in enumerate(treatments):
     ordered_cols = list(col_sums.index) + ['Unmapped']
     pivot_data = pivot_data[ordered_cols]
 
-    # Plot with colors (grey for unmapped)
-    n_colors = len(pivot_data.columns)
-    colors = sns.color_palette("husl", n_colors - 1)
-    colors.append((0.7, 0.7, 0.7))  # Grey for unmapped
+    # Map colors to bins using consistent color scheme
+    plot_colors = [bin_color_map[col] for col in pivot_data.columns]
 
-    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=colors, width=0.8, legend=False)
+    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=plot_colors, width=0.8, legend=False)
 
     axes[idx].set_title(treatment, fontsize=12, fontweight='bold')
     axes[idx].set_xlabel('Sample', fontsize=10)
@@ -441,6 +447,7 @@ plt.close()
 
 # Plot 2b: Faceted plot with all treatments (normalized, without unmapped)
 print("\nCreating faceted plot (all treatments normalized)...")
+# Use the same color mapping as the unmapped plot for consistency
 fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
 
 if len(treatments) == 1:
@@ -463,9 +470,10 @@ for idx, treatment in enumerate(treatments):
     col_sums = pivot_data.sum(axis=0).sort_values(ascending=False)
     pivot_data = pivot_data[col_sums.index]
 
-    # Plot with colors
-    colors = sns.color_palette("husl", len(pivot_data.columns))
-    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=colors, width=0.8, legend=False)
+    # Map colors to bins using consistent color scheme
+    plot_colors = [bin_color_map[col] for col in pivot_data.columns]
+
+    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=plot_colors, width=0.8, legend=False)
 
     axes[idx].set_title(treatment, fontsize=12, fontweight='bold')
     axes[idx].set_xlabel('Sample', fontsize=10)
