@@ -227,6 +227,25 @@ df_merged['Species_Label'] = df_merged['Species'].apply(
     lambda x: x if x == 'Unclassified' else x.split('_')[-1] if '_' in x else x
 )
 
+# Create Best_Taxonomy_Label - use most specific taxonomic level available
+def get_best_taxonomy(row):
+    """Return most specific taxonomic level: Species > Genus > Family"""
+    if row['Species_Label'] and row['Species_Label'] != 'Unclassified' and row['Species_Label'].strip():
+        return row['Species_Label']
+    elif row['Genus_Label'] and row['Genus_Label'] != 'Unclassified' and row['Genus_Label'].strip():
+        return row['Genus_Label']
+    elif row['Family_Label'] and row['Family_Label'] != 'Unclassified' and row['Family_Label'].strip():
+        return row['Family_Label']
+    else:
+        return 'Unclassified'
+
+df_merged['Best_Taxonomy_Label'] = df_merged.apply(get_best_taxonomy, axis=1)
+
+print(f"\nTaxonomy label summary:")
+print(f"  Species-level IDs: {(df_merged['Species'] != 'Unclassified').sum()} bins")
+print(f"  Genus-level IDs: {(df_merged['Genus'] != 'Unclassified').sum()} bins")
+print(f"  Family-level IDs: {(df_merged['Family'] != 'Unclassified').sum()} bins")
+
 # Save merged data
 merged_file = f"{output_dir}/final_report/merged_abundance_taxonomy.tsv"
 df_merged.to_csv(merged_file, sep='\t', index=False)
@@ -318,86 +337,29 @@ def create_stacked_barplot(data, group_by, label_col, title, filename,
 
     plt.close()
 
-# Plot 1: Per-treatment stacked barplots with family labels (no unmapped)
-for treatment in treatments:
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-    if not treatment_data.empty:
-        create_stacked_barplot(
-            treatment_data,
-            group_by='Sample',
-            label_col='Family_Label',
-            title=f'Bin Abundance by Family - {treatment}',
-            filename=f'abundance_family_{treatment}.png',
-            include_unmapped=False
-        )
+# Simplified plotting: Use Best_Taxonomy_Label for all plots
+# Generate only per-treatment plots (with unmapped) and one faceted plot (with unmapped)
 
-# Plot 2: Per-treatment stacked barplots with family labels (with unmapped)
+print("\n" + "="*80)
+print("Creating simplified taxonomy plots...")
+print("Using most specific taxonomic level for each bin (Species > Genus > Family)")
+print("="*80)
+
+# Plot 1: Per-treatment plots with unmapped
 for treatment in treatments:
     treatment_data = df_merged[df_merged['Treatment'] == treatment]
     if not treatment_data.empty:
         create_stacked_barplot(
             treatment_data,
             group_by='Sample',
-            label_col='Family_Label',
-            title=f'Bin Abundance by Family (with unmapped) - {treatment}',
-            filename=f'abundance_family_unmapped_{treatment}.png',
+            label_col='Best_Taxonomy_Label',
+            title=f'Bin Abundance by Taxonomy - {treatment}',
+            filename=f'abundance_taxonomy_{treatment}.png',
             include_unmapped=True
         )
 
-# Plot 3: Per-treatment stacked barplots with genus labels (no unmapped)
-for treatment in treatments:
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-    if not treatment_data.empty:
-        create_stacked_barplot(
-            treatment_data,
-            group_by='Sample',
-            label_col='Genus_Label',
-            title=f'Bin Abundance by Genus - {treatment}',
-            filename=f'abundance_genus_{treatment}.png',
-            include_unmapped=False
-        )
-
-# Plot 2: Per-treatment stacked barplots with genus labels (with unmapped)
-for treatment in treatments:
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-    if not treatment_data.empty:
-        create_stacked_barplot(
-            treatment_data,
-            group_by='Sample',
-            label_col='Genus_Label',
-            title=f'Bin Abundance by Genus (with unmapped) - {treatment}',
-            filename=f'abundance_genus_unmapped_{treatment}.png',
-            include_unmapped=True
-        )
-
-# Plot 3: Per-treatment stacked barplots with species labels (no unmapped)
-for treatment in treatments:
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-    if not treatment_data.empty:
-        create_stacked_barplot(
-            treatment_data,
-            group_by='Sample',
-            label_col='Species_Label',
-            title=f'Bin Abundance by Species - {treatment}',
-            filename=f'abundance_species_{treatment}.png',
-            include_unmapped=False
-        )
-
-# Plot 4: Per-treatment stacked barplots with species labels (with unmapped)
-for treatment in treatments:
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-    if not treatment_data.empty:
-        create_stacked_barplot(
-            treatment_data,
-            group_by='Sample',
-            label_col='Species_Label',
-            title=f'Bin Abundance by Species (with unmapped) - {treatment}',
-            filename=f'abundance_species_unmapped_{treatment}.png',
-            include_unmapped=True
-        )
-
-# Plot 5: Faceted plot with all treatments - Family (no unmapped)
-print("\nCreating faceted plot (Family)...")
+# Plot 2: Faceted plot with all treatments (with unmapped)
+print("\nCreating faceted plot (all treatments with unmapped)...")
 fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
 
 if len(treatments) == 1:
@@ -407,140 +369,8 @@ for idx, treatment in enumerate(treatments):
     treatment_data = df_merged[df_merged['Treatment'] == treatment]
 
     # Group and pivot
-    grouped = treatment_data.groupby(['Sample', 'Family_Label'])['Relative_Abundance'].sum().reset_index()
-    pivot_data = grouped.pivot(index='Sample', columns='Family_Label', values='Relative_Abundance')
-    pivot_data = pivot_data.fillna(0)
-
-    # Sort by abundance
-    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False)
-    pivot_data = pivot_data[col_sums.index]
-
-    # Plot
-    colors = sns.color_palette("husl", len(pivot_data.columns))
-    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=colors, width=0.8, legend=False)
-
-    axes[idx].set_title(treatment, fontsize=12, fontweight='bold')
-    axes[idx].set_xlabel('Sample', fontsize=10)
-    axes[idx].set_ylim(0, 100)
-    axes[idx].grid(axis='y', alpha=0.3, linestyle='--')
-    plt.setp(axes[idx].xaxis.get_majorticklabels(), rotation=45, ha='right')
-
-axes[0].set_ylabel('Relative Abundance (%)', fontsize=10, fontweight='bold')
-
-# Create shared legend
-handles, labels = axes[-1].get_legend_handles_labels()
-fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5),
-          frameon=True, fontsize=9, title='Family')
-
-plt.suptitle('Bin Abundance by Family - All Treatments', fontsize=14, fontweight='bold', y=1.02)
-plt.tight_layout()
-plt.savefig(f"{plots_dir}/abundance_family_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
-plt.savefig(f"{plots_dir}/abundance_family_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
-print(f"  Saved PNG: {plots_dir}/abundance_family_all_treatments_faceted.png")
-print(f"  Saved SVG: {plots_dir}/abundance_family_all_treatments_faceted.svg")
-plt.close()
-
-# Plot 6: Faceted plot with all treatments - Genus (no unmapped)
-print("\nCreating faceted plot (Genus)...")
-fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
-
-if len(treatments) == 1:
-    axes = [axes]
-
-for idx, treatment in enumerate(treatments):
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-
-    # Group and pivot
-    grouped = treatment_data.groupby(['Sample', 'Genus_Label'])['Relative_Abundance'].sum().reset_index()
-    pivot_data = grouped.pivot(index='Sample', columns='Genus_Label', values='Relative_Abundance')
-    pivot_data = pivot_data.fillna(0)
-
-    # Sort by abundance
-    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False)
-    pivot_data = pivot_data[col_sums.index]
-
-    # Plot
-    colors = sns.color_palette("husl", len(pivot_data.columns))
-    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=colors, width=0.8, legend=False)
-
-    axes[idx].set_title(treatment, fontsize=12, fontweight='bold')
-    axes[idx].set_xlabel('Sample', fontsize=10)
-    axes[idx].set_ylim(0, 100)
-    axes[idx].grid(axis='y', alpha=0.3, linestyle='--')
-    plt.setp(axes[idx].xaxis.get_majorticklabels(), rotation=45, ha='right')
-
-axes[0].set_ylabel('Relative Abundance (%)', fontsize=10, fontweight='bold')
-
-# Create shared legend
-handles, labels = axes[-1].get_legend_handles_labels()
-fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5),
-          frameon=True, fontsize=9, title='Genus')
-
-plt.suptitle('Bin Abundance by Genus - All Treatments', fontsize=14, fontweight='bold', y=1.02)
-plt.tight_layout()
-plt.savefig(f"{plots_dir}/abundance_genus_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
-plt.savefig(f"{plots_dir}/abundance_genus_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
-print(f"  Saved PNG: {plots_dir}/abundance_genus_all_treatments_faceted.png")
-print(f"  Saved SVG: {plots_dir}/abundance_genus_all_treatments_faceted.svg")
-plt.close()
-
-# Plot 6: Faceted plot with all treatments - Species (no unmapped)
-print("\nCreating faceted plot (Species)...")
-fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
-
-if len(treatments) == 1:
-    axes = [axes]
-
-for idx, treatment in enumerate(treatments):
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-
-    # Group and pivot
-    grouped = treatment_data.groupby(['Sample', 'Species_Label'])['Relative_Abundance'].sum().reset_index()
-    pivot_data = grouped.pivot(index='Sample', columns='Species_Label', values='Relative_Abundance')
-    pivot_data = pivot_data.fillna(0)
-
-    # Sort by abundance
-    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False)
-    pivot_data = pivot_data[col_sums.index]
-
-    # Plot
-    colors = sns.color_palette("husl", len(pivot_data.columns))
-    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=colors, width=0.8, legend=False)
-
-    axes[idx].set_title(treatment, fontsize=12, fontweight='bold')
-    axes[idx].set_xlabel('Sample', fontsize=10)
-    axes[idx].set_ylim(0, 100)
-    axes[idx].grid(axis='y', alpha=0.3, linestyle='--')
-    plt.setp(axes[idx].xaxis.get_majorticklabels(), rotation=45, ha='right')
-
-axes[0].set_ylabel('Relative Abundance (%)', fontsize=10, fontweight='bold')
-
-# Create shared legend
-handles, labels = axes[-1].get_legend_handles_labels()
-fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5),
-          frameon=True, fontsize=9, title='Species')
-
-plt.suptitle('Bin Abundance by Species - All Treatments', fontsize=14, fontweight='bold', y=1.02)
-plt.tight_layout()
-plt.savefig(f"{plots_dir}/abundance_species_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
-plt.savefig(f"{plots_dir}/abundance_species_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
-print(f"  Saved PNG: {plots_dir}/abundance_species_all_treatments_faceted.png")
-print(f"  Saved SVG: {plots_dir}/abundance_species_all_treatments_faceted.svg")
-plt.close()
-
-# Plot 7: Faceted plot with all treatments - Genus (WITH unmapped)
-print("\nCreating faceted plot with unmapped (Genus)...")
-fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
-
-if len(treatments) == 1:
-    axes = [axes]
-
-for idx, treatment in enumerate(treatments):
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-
-    # Group and pivot
-    grouped = treatment_data.groupby(['Sample', 'Genus_Label'])['Relative_Abundance'].sum().reset_index()
-    pivot_data = grouped.pivot(index='Sample', columns='Genus_Label', values='Relative_Abundance')
+    grouped = treatment_data.groupby(['Sample', 'Best_Taxonomy_Label'])['Relative_Abundance'].sum().reset_index()
+    pivot_data = grouped.pivot(index='Sample', columns='Best_Taxonomy_Label', values='Relative_Abundance')
     pivot_data = pivot_data.fillna(0)
 
     # Add unmapped reads
@@ -548,20 +378,16 @@ for idx, treatment in enumerate(treatments):
     pivot_data['Unmapped'] = 100 - total_mapped
     pivot_data['Unmapped'] = pivot_data['Unmapped'].clip(lower=0)
 
-    # Sort by abundance (keep Unmapped at end)
-    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False)
-    # Move Unmapped to end if present
-    if 'Unmapped' in col_sums.index:
-        cols_order = [col for col in col_sums.index if col != 'Unmapped'] + ['Unmapped']
-        pivot_data = pivot_data[cols_order]
-    else:
-        pivot_data = pivot_data[col_sums.index]
+    # Sort by abundance (excluding Unmapped)
+    other_cols = [col for col in pivot_data.columns if col != 'Unmapped']
+    col_sums = pivot_data[other_cols].sum(axis=0).sort_values(ascending=False)
+    ordered_cols = list(col_sums.index) + ['Unmapped']
+    pivot_data = pivot_data[ordered_cols]
 
-    # Plot - grey for unmapped
+    # Plot with colors (grey for unmapped)
     n_colors = len(pivot_data.columns)
-    colors = sns.color_palette("husl", n_colors - 1) if 'Unmapped' in pivot_data.columns else sns.color_palette("husl", n_colors)
-    if 'Unmapped' in pivot_data.columns:
-        colors.append((0.7, 0.7, 0.7))
+    colors = sns.color_palette("husl", n_colors - 1)
+    colors.append((0.7, 0.7, 0.7))  # Grey for unmapped
 
     pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=colors, width=0.8, legend=False)
 
@@ -576,150 +402,26 @@ axes[0].set_ylabel('Relative Abundance (%)', fontsize=10, fontweight='bold')
 # Create shared legend
 handles, labels = axes[-1].get_legend_handles_labels()
 fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5),
-          frameon=True, fontsize=9, title='Genus')
+          frameon=True, fontsize=9, title='Taxonomy')
 
-plt.suptitle('Bin Abundance by Genus (with unmapped) - All Treatments', fontsize=14, fontweight='bold', y=1.02)
+plt.suptitle('Bin Abundance by Taxonomy - All Treatments', fontsize=14, fontweight='bold', y=1.02)
 plt.tight_layout()
-plt.savefig(f"{plots_dir}/abundance_genus_unmapped_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
-plt.savefig(f"{plots_dir}/abundance_genus_unmapped_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
-print(f"  Saved PNG: {plots_dir}/abundance_genus_unmapped_all_treatments_faceted.png")
-print(f"  Saved SVG: {plots_dir}/abundance_genus_unmapped_all_treatments_faceted.svg")
+plt.savefig(f"{plots_dir}/abundance_taxonomy_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
+plt.savefig(f"{plots_dir}/abundance_taxonomy_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
+print(f"  Saved PNG: {plots_dir}/abundance_taxonomy_all_treatments_faceted.png")
+print(f"  Saved SVG: {plots_dir}/abundance_taxonomy_all_treatments_faceted.svg")
 plt.close()
 
-# Plot 8: Faceted plot with all treatments - Species (WITH unmapped)
-print("\nCreating faceted plot with unmapped (Species)...")
-fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
-
-if len(treatments) == 1:
-    axes = [axes]
-
-for idx, treatment in enumerate(treatments):
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-
-    # Group and pivot
-    grouped = treatment_data.groupby(['Sample', 'Species_Label'])['Relative_Abundance'].sum().reset_index()
-    pivot_data = grouped.pivot(index='Sample', columns='Species_Label', values='Relative_Abundance')
-    pivot_data = pivot_data.fillna(0)
-
-    # Add unmapped reads
-    total_mapped = pivot_data.sum(axis=1)
-    pivot_data['Unmapped'] = 100 - total_mapped
-    pivot_data['Unmapped'] = pivot_data['Unmapped'].clip(lower=0)
-
-    # Sort by abundance (keep Unmapped at end)
-    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False)
-    # Move Unmapped to end if present
-    if 'Unmapped' in col_sums.index:
-        cols_order = [col for col in col_sums.index if col != 'Unmapped'] + ['Unmapped']
-        pivot_data = pivot_data[cols_order]
-    else:
-        pivot_data = pivot_data[col_sums.index]
-
-    # Plot - grey for unmapped
-    n_colors = len(pivot_data.columns)
-    colors = sns.color_palette("husl", n_colors - 1) if 'Unmapped' in pivot_data.columns else sns.color_palette("husl", n_colors)
-    if 'Unmapped' in pivot_data.columns:
-        colors.append((0.7, 0.7, 0.7))
-
-    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=colors, width=0.8, legend=False)
-
-    axes[idx].set_title(treatment, fontsize=12, fontweight='bold')
-    axes[idx].set_xlabel('Sample', fontsize=10)
-    axes[idx].set_ylim(0, 100)
-    axes[idx].grid(axis='y', alpha=0.3, linestyle='--')
-    plt.setp(axes[idx].xaxis.get_majorticklabels(), rotation=45, ha='right')
-
-axes[0].set_ylabel('Relative Abundance (%)', fontsize=10, fontweight='bold')
-
-# Create shared legend
-handles, labels = axes[-1].get_legend_handles_labels()
-fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5),
-          frameon=True, fontsize=9, title='Species')
-
-plt.suptitle('Bin Abundance by Species (with unmapped) - All Treatments', fontsize=14, fontweight='bold', y=1.02)
-plt.tight_layout()
-plt.savefig(f"{plots_dir}/abundance_species_unmapped_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
-plt.savefig(f"{plots_dir}/abundance_species_unmapped_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
-print(f"  Saved PNG: {plots_dir}/abundance_species_unmapped_all_treatments_faceted.png")
-print(f"  Saved SVG: {plots_dir}/abundance_species_unmapped_all_treatments_faceted.svg")
-plt.close()
-
-# Plot 11: Faceted plot with all treatments - Family (WITH unmapped)
-print("\nCreating faceted plot with unmapped (Family)...")
-fig, axes = plt.subplots(1, len(treatments), figsize=(7*len(treatments), 6), sharey=True)
-
-if len(treatments) == 1:
-    axes = [axes]
-
-for idx, treatment in enumerate(treatments):
-    treatment_data = df_merged[df_merged['Treatment'] == treatment]
-
-    # Group and pivot
-    grouped = treatment_data.groupby(['Sample', 'Family_Label'])['Relative_Abundance'].sum().reset_index()
-    pivot_data = grouped.pivot(index='Sample', columns='Family_Label', values='Relative_Abundance')
-    pivot_data = pivot_data.fillna(0)
-
-    # Add unmapped reads
-    total_mapped = pivot_data.sum(axis=1)
-    pivot_data['Unmapped'] = 100 - total_mapped
-    pivot_data['Unmapped'] = pivot_data['Unmapped'].clip(lower=0)
-
-    # Sort by abundance (keep Unmapped at end)
-    col_sums = pivot_data.sum(axis=0).sort_values(ascending=False)
-    # Move Unmapped to end if present
-    if 'Unmapped' in col_sums.index:
-        cols_order = [col for col in col_sums.index if col != 'Unmapped'] + ['Unmapped']
-        pivot_data = pivot_data[cols_order]
-    else:
-        pivot_data = pivot_data[col_sums.index]
-
-    # Plot - grey for unmapped
-    n_colors = len(pivot_data.columns)
-    colors = sns.color_palette("husl", n_colors - 1) if 'Unmapped' in pivot_data.columns else sns.color_palette("husl", n_colors)
-    if 'Unmapped' in pivot_data.columns:
-        colors.append((0.7, 0.7, 0.7))
-
-    pivot_data.plot(kind='bar', stacked=True, ax=axes[idx], color=colors, width=0.8, legend=False)
-
-    axes[idx].set_title(treatment, fontsize=12, fontweight='bold')
-    axes[idx].set_xlabel('Sample', fontsize=10)
-    axes[idx].set_ylim(0, 100)
-    axes[idx].grid(axis='y', alpha=0.3, linestyle='--')
-    plt.setp(axes[idx].xaxis.get_majorticklabels(), rotation=45, ha='right')
-
-axes[0].set_ylabel('Relative Abundance (%)', fontsize=10, fontweight='bold')
-
-# Create shared legend
-handles, labels = axes[-1].get_legend_handles_labels()
-fig.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.5),
-          frameon=True, fontsize=9, title='Family')
-
-plt.suptitle('Bin Abundance by Family (with unmapped) - All Treatments', fontsize=14, fontweight='bold', y=1.02)
-plt.tight_layout()
-plt.savefig(f"{plots_dir}/abundance_family_unmapped_all_treatments_faceted.png", dpi=300, bbox_inches='tight')
-plt.savefig(f"{plots_dir}/abundance_family_unmapped_all_treatments_faceted.svg", format='svg', bbox_inches='tight')
-print(f"  Saved PNG: {plots_dir}/abundance_family_unmapped_all_treatments_faceted.png")
-print(f"  Saved SVG: {plots_dir}/abundance_family_unmapped_all_treatments_faceted.svg")
-plt.close()
 
 print("\n" + "="*80)
 print("Plot generation complete!")
 print("="*80)
 print(f"\nAll plots saved to: {plots_dir}")
 print("\nGenerated plots:")
-print(f"  - Per-treatment family plots (no unmapped): {len(treatments)} PNG+SVG")
-print(f"  - Per-treatment family plots (with unmapped): {len(treatments)} PNG+SVG")
-print(f"  - Per-treatment genus plots (no unmapped): {len(treatments)} PNG+SVG")
-print(f"  - Per-treatment genus plots (with unmapped): {len(treatments)} PNG+SVG")
-print(f"  - Per-treatment species plots (no unmapped): {len(treatments)} PNG+SVG")
-print(f"  - Per-treatment species plots (with unmapped): {len(treatments)} PNG+SVG")
-print(f"  - Faceted family plot (all treatments): 1 PNG+SVG")
-print(f"  - Faceted family plot with unmapped (all treatments): 1 PNG+SVG")
-print(f"  - Faceted genus plot (all treatments): 1 PNG+SVG")
-print(f"  - Faceted genus plot with unmapped (all treatments): 1 PNG+SVG")
-print(f"  - Faceted species plot (all treatments): 1 PNG+SVG")
-print(f"  - Faceted species plot with unmapped (all treatments): 1 PNG+SVG")
-print(f"\nTotal plot files: {len(treatments) * 12 + 12} (PNG + SVG formats)")
+print(f"  - Per-treatment taxonomy plots (with unmapped): {len(treatments)} PNG+SVG")
+print(f"  - Faceted taxonomy plot (all treatments, with unmapped): 1 PNG+SVG")
+print(f"\nTotal plot files: {len(treatments) * 2 + 2} (PNG + SVG formats)")
+print(f"Plots use most specific taxonomic level for each bin (Species > Genus > Family)")
 PYTHON_EOF
 
     # Run Python script
@@ -774,27 +476,16 @@ Generated Outputs:
 2. Plots Directory:
    ${FINAL_REPORT_DIR}/plots/
 
-   Per-treatment plots (Family level - PNG + SVG):
-   $(for t in "${treatments[@]}"; do echo "   - abundance_family_${t}.png/.svg (mapped bins only)"; done)
-   $(for t in "${treatments[@]}"; do echo "   - abundance_family_unmapped_${t}.png/.svg (with unmapped reads)"; done)
+   Per-treatment plots (Taxonomy - PNG + SVG):
+   $(for t in "${treatments[@]}"; do echo "   - abundance_taxonomy_${t}.png/.svg (with unmapped reads)"; done)
 
-   Per-treatment plots (Genus level - PNG + SVG):
-   $(for t in "${treatments[@]}"; do echo "   - abundance_genus_${t}.png/.svg (mapped bins only)"; done)
-   $(for t in "${treatments[@]}"; do echo "   - abundance_genus_unmapped_${t}.png/.svg (with unmapped reads)"; done)
+   Comparative plot (all treatments - PNG + SVG):
+   - abundance_taxonomy_all_treatments_faceted.png/.svg (with unmapped reads)
 
-   Per-treatment plots (Species level - PNG + SVG):
-   $(for t in "${treatments[@]}"; do echo "   - abundance_species_${t}.png/.svg (mapped bins only)"; done)
-   $(for t in "${treatments[@]}"; do echo "   - abundance_species_unmapped_${t}.png/.svg (with unmapped reads)"; done)
+   Total: $((${#treatments[@]} * 2 + 2)) plot files (PNG + SVG formats)
 
-   Comparative plots (all treatments - PNG + SVG):
-   - abundance_family_all_treatments_faceted.png/.svg (mapped bins only)
-   - abundance_family_unmapped_all_treatments_faceted.png/.svg (with unmapped reads)
-   - abundance_genus_all_treatments_faceted.png/.svg (mapped bins only)
-   - abundance_genus_unmapped_all_treatments_faceted.png/.svg (with unmapped reads)
-   - abundance_species_all_treatments_faceted.png/.svg (mapped bins only)
-   - abundance_species_unmapped_all_treatments_faceted.png/.svg (with unmapped reads)
-
-   Total: $((${#treatments[@]} * 12 + 12)) plot files (PNG + SVG formats)
+   Note: Plots use the most specific taxonomic level available for each bin
+   (Species > Genus > Family)
 
 3. Processing Logs:
    ${FINAL_REPORT_DIR}/plotting.log
@@ -802,20 +493,18 @@ Generated Outputs:
 Description of Plots:
 ---------------------
 
-1. Per-treatment plots (family/genus/species, with/without unmapped):
-   - Stacked barplots showing bin abundance across samples
+1. Per-treatment plots (taxonomy, with unmapped):
+   - Stacked barplots showing bin abundance across samples in each treatment
    - Each bar represents a sample
-   - Colors represent different genera/species
+   - Colors represent different taxonomic groups (most specific level available)
+   - Grey bars show unmapped reads: 100% - (sum of all bin abundances in that sample)
    - Y-axis: Relative abundance (%)
-   - Versions with "unmapped" show unclassified reads in grey
-   - Unmapped % = 100% - (sum of all bin abundances in that sample)
 
-2. Faceted plots (all treatments):
-   - Side-by-side comparison of all treatments
-   - Shared legend for easy comparison
-   - Each facet shows one treatment
-   - Useful for cross-treatment comparisons
-   - Available both with and without unmapped reads shown
+2. Faceted plot (all treatments, with unmapped):
+   - Side-by-side comparison of all treatments in one figure
+   - Each facet shows one treatment with all its samples
+   - Shared legend for easy comparison across treatments
+   - Shows taxonomic composition and unmapped reads for all samples
 
 3. File Formats:
    - PNG: High-resolution raster format (300 DPI) - good for presentations/publications
