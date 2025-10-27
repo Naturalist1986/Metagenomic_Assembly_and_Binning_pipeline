@@ -175,7 +175,7 @@ is_treatment_level_stage() {
 # Function to clear checkpoint for a treatment
 clear_treatment_checkpoint() {
     local treatment="$1"
-    local checkpoint_file="${CHECKPOINT_DIR}/${treatment}_${CHECKPOINT_NAME}.done"
+    local checkpoint_file="${CHECKPOINT_DIR}/${treatment}/${CHECKPOINT_NAME}_complete"
 
     echo "Clearing checkpoint for treatment: $treatment"
 
@@ -204,23 +204,24 @@ clear_treatment_checkpoint() {
 # Function to clear checkpoint for a sample
 clear_sample_checkpoint() {
     local sample_name="$1"
-    local checkpoint_file="${CHECKPOINT_DIR}/${sample_name}_${CHECKPOINT_NAME}.done"
 
-    echo "Clearing checkpoint for sample: $sample_name"
+    # Find treatment for this sample
+    local sample_info=$(grep "^${sample_name}," "$SAMPLE_INFO_FILE" 2>/dev/null | head -1)
+    if [ -n "$sample_info" ]; then
+        local treatment=$(echo "$sample_info" | cut -d',' -f2)
+        local checkpoint_file="${CHECKPOINT_DIR}/${treatment}/${sample_name}_${CHECKPOINT_NAME}_complete"
 
-    if [ -f "$checkpoint_file" ]; then
-        rm -v "$checkpoint_file"
-        echo "  ✓ Deleted checkpoint: $checkpoint_file"
-    else
-        echo "  ℹ Checkpoint not found: $checkpoint_file"
-    fi
+        echo "Clearing checkpoint for sample: $sample_name (treatment: $treatment)"
 
-    # For sample-level stages, need to find the treatment
-    if [ "$DELETE_OUTPUT" = true ]; then
-        # Find treatment for this sample
-        local sample_info=$(grep "^${sample_name}," "$SAMPLE_INFO_FILE" 2>/dev/null | head -1)
-        if [ -n "$sample_info" ]; then
-            local treatment=$(echo "$sample_info" | cut -d',' -f2)
+        if [ -f "$checkpoint_file" ]; then
+            rm -v "$checkpoint_file"
+            echo "  ✓ Deleted checkpoint: $checkpoint_file"
+        else
+            echo "  ℹ Checkpoint not found: $checkpoint_file"
+        fi
+
+        # Delete output directory if requested
+        if [ "$DELETE_OUTPUT" = true ]; then
             local output_dir="${OUTPUT_DIR}/${OUTPUT_DIR_NAME}/${treatment}/${sample_name}"
 
             if [ -d "$output_dir" ]; then
@@ -230,9 +231,9 @@ clear_sample_checkpoint() {
             else
                 echo "  ℹ Output directory not found: $output_dir"
             fi
-        else
-            echo "  ⚠ Could not find treatment for sample in SAMPLE_INFO_FILE"
         fi
+    else
+        echo "ERROR: Could not find treatment for sample '$sample_name' in SAMPLE_INFO_FILE: $SAMPLE_INFO_FILE"
     fi
 
     echo ""
@@ -240,7 +241,7 @@ clear_sample_checkpoint() {
 
 # Function to clear single execution checkpoint (like final report)
 clear_single_checkpoint() {
-    local checkpoint_file="${CHECKPOINT_DIR}/${CHECKPOINT_NAME}.done"
+    local checkpoint_file="${CHECKPOINT_DIR}/${CHECKPOINT_NAME}_complete"
 
     echo "Clearing checkpoint for stage $STAGE (single execution)"
 
