@@ -5,7 +5,7 @@
 
 # Default values
 START_STAGE=-1  # Start from lane merging by default
-END_STAGE=12    # Updated to include new stages
+END_STAGE=10    # Updated to new final stage
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PIPELINE_SCRIPT_DIR="$SCRIPT_DIR"  # Export for SLURM jobs
 
@@ -23,8 +23,8 @@ Master script to run the complete metagenomic pipeline.
 Supports multiple sample sheet formats including multi-run datasets.
 
 OPTIONS:
-    -s, --start-stage NUM         Start from stage NUM (-1 to 12) [default: -1]
-    -e, --end-stage NUM           End at stage NUM (-1 to 12) [default: 12]
+    -s, --start-stage NUM         Start from stage NUM (-1 to 10) [default: -1]
+    -e, --end-stage NUM           End at stage NUM (-1 to 10) [default: 10]
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
     -t, --treatment NAME          Run only for specific treatment/group (can be used multiple times)
@@ -72,10 +72,8 @@ STAGES:
     7  - CheckM2 (sample-level or treatment-level based on -b flag)
   7.5  - Bin Selection (selects best reassembly version per bin)
     8  - MetaWRAP Quant (quantifies refined bins before reassembly)
-    9  - CoverM (per-sample abundance calculation)
-   10  - Bin Collection (per treatment: consolidate CoverM abundance, run GTDB-Tk)
-   11  - Combined Report
-   12  - Final Report
+    9  - Bin Collection (per treatment: consolidate CoverM abundance, run GTDB-Tk)
+   10  - Final Report (taxonomy-labeled abundance plots for all treatments)
 
 BINNING MODES:
     By default, binning is performed at the sample level (one binning job per sample).
@@ -356,10 +354,8 @@ declare -A STAGE_NAMES=(
     [7]="CheckM2"
     [7.5]="Bin Selection"
     [8]="MetaWRAP Quant"
-    [9]="CoverM"
-    [10]="Bin Collection (per treatment: consolidate abundance, GTDB-Tk)"
-    [11]="Combined Report"
-    [12]="Final Report"
+    [9]="Bin Collection (per treatment: consolidate abundance, GTDB-Tk)"
+    [10]="Final Report (taxonomy-labeled abundance plots)"
 )
 
 declare -A STAGE_SCRIPTS=(
@@ -375,10 +371,8 @@ declare -A STAGE_SCRIPTS=(
     [7]="07_checkm2.sh"
     [7.5]="07b_bin_selection.sh"
     [8]="08a_metawrap_quant.sh"
-    [9]="08_coverm.sh"
-    [10]="09_bin_collection.sh"
-    [11]="10_combined_report.sh"
-    [12]="11_final_report.sh"
+    [9]="08b_bin_collection.sh"
+    [10]="09_final_report.sh"
 )
 
 # Function to get the correct assembly script based on mode
@@ -420,7 +414,6 @@ if [ "$TREATMENT_LEVEL_BINNING" = true ]; then
     STAGE_NAMES[7]="CheckM2 (treatment-level)"
     STAGE_NAMES[7.5]="Bin Selection (treatment-level)"
     STAGE_NAMES[8]="MetaWRAP Quant (treatment-level)"
-    STAGE_NAMES[9]="CoverM (per-sample, dual mode)"
 else
     STAGE_NAMES[3]="Binning (sample-level)"
     STAGE_NAMES[4]="Bin Refinement (sample-level)"
@@ -429,7 +422,6 @@ else
     STAGE_NAMES[7]="CheckM2 (sample-level)"
     STAGE_NAMES[7.5]="Bin Selection (sample-level)"
     STAGE_NAMES[8]="MetaWRAP Quant (sample-level)"
-    STAGE_NAMES[9]="CoverM (per-sample)"
 fi
 
 # Function to check if filters match any samples
@@ -628,8 +620,8 @@ calculate_array_size() {
         return
     fi
 
-    # Sample-level stages (-1, 0, 0.5, 1-9 in individual mode)
-    if compare_stages "$stage" "9" "le"; then
+    # Sample-level stages (-1, 0, 0.5, 1-8 in individual mode)
+    if compare_stages "$stage" "8" "le"; then
         # Filter samples if specific treatment or sample requested
         if [ ${#SPECIFIC_TREATMENTS[@]} -gt 0 ] || [ ${#SPECIFIC_SAMPLES[@]} -gt 0 ]; then
             local count=0
@@ -653,8 +645,8 @@ calculate_array_size() {
         else
             echo "$total_samples"
         fi
-    else
-        # Treatment-level stages (9-11) - one job per treatment
+    elif [ "$stage" = "9" ]; then
+        # Stage 9: Bin collection - treatment-level (one job per treatment)
         local treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
             if [ ${#SPECIFIC_TREATMENTS[@]} -gt 0 ]; then
@@ -672,6 +664,12 @@ calculate_array_size() {
         else
             echo "0"
         fi
+    elif [ "$stage" = "10" ]; then
+        # Stage 10: Final report - runs once for entire pipeline (not an array job)
+        echo "1"
+    else
+        # Unknown stage
+        echo "0"
     fi
 }
 
@@ -752,12 +750,12 @@ get_filtered_indices() {
     fi
 
     # Sample-level stages
-    if compare_stages "$stage" "9" "le"; then
+    if compare_stages "$stage" "8" "le"; then
         for i in $(seq 0 $((total_samples - 1))); do
             sample_info=$(get_sample_info_by_index $i 2>/dev/null)
             if [ -n "$sample_info" ]; then
                 IFS='|' read -r sample_name treatment _ _ <<< "$sample_info"
-                
+
                 # Check filters
                 if ! is_in_array "$treatment" "${SPECIFIC_TREATMENTS[@]}"; then
                     continue
@@ -765,12 +763,12 @@ get_filtered_indices() {
                 if ! is_in_array "$sample_name" "${SPECIFIC_SAMPLES[@]}"; then
                     continue
                 fi
-                
+
                 indices+=($i)
             fi
         done
-    else
-        # Treatment-level stages
+    elif [ "$stage" = "9" ]; then
+        # Stage 9: Bin collection - treatment-level
         treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
             local treatments=($treatments_list)
@@ -781,8 +779,11 @@ get_filtered_indices() {
                 indices+=($i)
             done
         fi
+    elif [ "$stage" = "10" ]; then
+        # Stage 10: Final report - single execution (index 0)
+        indices+=(0)
     fi
-    
+
     echo "${indices[@]}"
 }
 
