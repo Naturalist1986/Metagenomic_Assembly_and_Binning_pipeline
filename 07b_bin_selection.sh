@@ -86,8 +86,8 @@ get_bin_quality() {
     local checkm2_report="$1"
     local bin_name="$2"
 
-    # Look for this bin in the CheckM2 report
-    local bin_line=$(grep "^${bin_name}" "$checkm2_report" | head -1)
+    # Look for this bin in the CheckM2 report (exact match with tab delimiter)
+    local bin_line=$(grep "^${bin_name}\t" "$checkm2_report" | head -1)
 
     if [ -z "$bin_line" ]; then
         echo ""
