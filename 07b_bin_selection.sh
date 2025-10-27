@@ -86,17 +86,17 @@ get_bin_quality() {
     local checkm2_report="$1"
     local bin_name="$2"
 
-    # Look for this bin in the CheckM2 report (exact match with tab delimiter)
-    local bin_line=$(grep "^${bin_name}\t" "$checkm2_report" | head -1)
+    # Use awk to find exact match in first column and extract completeness/contamination
+    # This handles both tab and space delimited files robustly
+    local quality_data=$(awk -v bin="$bin_name" '$1 == bin {print $2 "|" $3; exit}' "$checkm2_report")
 
-    if [ -z "$bin_line" ]; then
+    if [ -z "$quality_data" ]; then
         echo ""
         return 1
     fi
 
-    # Extract completeness (column 2) and contamination (column 3)
-    local completeness=$(echo "$bin_line" | awk '{print $2}')
-    local contamination=$(echo "$bin_line" | awk '{print $3}')
+    # Parse completeness and contamination
+    IFS='|' read -r completeness contamination <<< "$quality_data"
 
     # Validate that values are numeric and not empty/N/A
     if [ -z "$completeness" ] || [ -z "$contamination" ] || \
