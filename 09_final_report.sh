@@ -251,10 +251,11 @@ def create_stacked_barplot(data, group_by, label_col, title, filename,
 
     # Add unmapped reads if requested
     if include_unmapped:
-        # Calculate unmapped as 100 - sum(mapped)
-        total_mapped = pivot_data.sum(axis=1)
+        # Calculate unmapped reads as 100% minus the sum of all bin abundances in each sample
+        # This represents reads that didn't map to any of the assembled bins
+        total_mapped = pivot_data.sum(axis=1)  # Sum across all bins per sample
         pivot_data['Unmapped'] = 100 - total_mapped
-        pivot_data['Unmapped'] = pivot_data['Unmapped'].clip(lower=0)
+        pivot_data['Unmapped'] = pivot_data['Unmapped'].clip(lower=0)  # Ensure non-negative
 
     # Sort columns by abundance (most abundant first)
     col_sums = pivot_data.sum(axis=0).sort_values(ascending=False)
