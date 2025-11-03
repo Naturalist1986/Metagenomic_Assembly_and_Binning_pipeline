@@ -65,9 +65,9 @@ The pipeline requires the following conda environments:
 1. **Sample Information File** (`samples.csv`):
    ```csv
    sample_name,treatment,read1,read2
-   sample1,treatment1,/path/to/sample1_R1.fastq.gz,/path/to/sample1_R2.fastq.gz
-   sample2,treatment1,/path/to/sample2_R1.fastq.gz,/path/to/sample2_R2.fastq.gz
-   sample3,treatment2,/path/to/sample3_R1.fastq.gz,/path/to/sample3_R2.fastq.gz
+   sample1,treatment1,sample1_R1.fastq.gz,sample1_R2.fastq.gz
+   sample2,treatment1,sample2_R1.fastq.gz,sample2_R2.fastq.gz
+   sample3,treatment2,sample3_R1.fastq.gz,sample3_R2.fastq.gz
    ```
 
 2. **Treatments File** (`treatments.txt`) - for treatment-level binning:
