@@ -101,7 +101,7 @@ stage_binning_treatment() {
     log "Running treatment-level binning for: $treatment"
 
     local binning_dir="${OUTPUT_DIR}/binning/${treatment}"
-    local assembly_dir="${OUTPUT_DIR}/assembly/${treatment}"
+    local coassembly_dir="${OUTPUT_DIR}/coassembly/${treatment}"
 
     mkdir -p "$binning_dir"
 
@@ -114,12 +114,13 @@ stage_binning_treatment() {
     # Check for co-assembly file
     local assembly_file=""
     for possible_file in \
-        "${assembly_dir}/contigs.fasta" \
-        "${assembly_dir}/scaffolds.fasta" \
-        "${assembly_dir}/final_contigs.fasta" \
-        "${assembly_dir}/assembly.fasta" \
-        "${assembly_dir}/${treatment}_contigs.fasta" \
-        "${assembly_dir}/${treatment}_scaffolds.fasta"; do
+        "${coassembly_dir}/contigs.fasta" \
+        "${coassembly_dir}/scaffolds.fasta" \
+        "${coassembly_dir}/final_assembly.fasta" \
+        "${coassembly_dir}/final_contigs.fasta" \
+        "${coassembly_dir}/assembly.fasta" \
+        "${coassembly_dir}/${treatment}_contigs.fasta" \
+        "${coassembly_dir}/${treatment}_scaffolds.fasta"; do
 
         if [ -f "$possible_file" ] && [ -s "$possible_file" ]; then
             assembly_file="$possible_file"
@@ -130,7 +131,8 @@ stage_binning_treatment() {
 
     if [ -z "$assembly_file" ]; then
         log "ERROR: No co-assembly file found for treatment $treatment"
-        log "Expected location: $assembly_dir"
+        log "Expected location: $coassembly_dir"
+        log "Checked files: contigs.fasta, scaffolds.fasta, final_assembly.fasta, final_contigs.fasta"
         return 1
     fi
 
