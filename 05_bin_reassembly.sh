@@ -279,10 +279,18 @@ run_manual_reassembly() {
         if [ ! -f "$bin_file" ]; then
             continue
         fi
-        
+
         local bin_name=$(basename "$bin_file" .fa)
+
+        # Check if bin already reassembled (for restart capability)
+        if [ -f "${reassembled_dir}/${bin_name}.fa" ] && [ -s "${reassembled_dir}/${bin_name}.fa" ]; then
+            log "Processing bin: $bin_name - already reassembled, skipping"
+            ((copied_count++))
+            continue
+        fi
+
         log "Processing bin: $bin_name"
-        
+
         # Check bin size - only reassemble larger bins
         local bin_size=$(grep -v "^>" "$bin_file" | tr -d '\n' | wc -c)
         local contig_count=$(grep -c "^>" "$bin_file")
