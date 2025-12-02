@@ -846,7 +846,12 @@ submit_job() {
     if [ -n "$dependency" ]; then
         cmd+=" --dependency=afterok:${dependency}"
     fi
-    
+
+    # Add account if provided
+    if [ -n "$SLURM_ACCOUNT" ]; then
+        cmd+=" --account=${SLURM_ACCOUNT}"
+    fi
+
     # Add array specification
     if [ $array_size -gt 1 ]; then
         indices=($(get_filtered_indices $stage))

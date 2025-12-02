@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=final_report
-#SBATCH --account=$SLURM_ACCOUNT
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4

@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=assembly
-#SBATCH --account=$SLURM_ACCOUNT
 #SBATCH --array=0-99%10
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
