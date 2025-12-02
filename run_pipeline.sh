@@ -32,6 +32,7 @@ OPTIONS:
     -i, --input-dir PATH          Input directory containing FASTQ files
     -o, --output-dir PATH         Output directory for results
     -S, --sample-sheet PATH       Sample sheet (Excel, CSV, or TSV)
+    -A, --account NAME            SLURM account name for job submission
     -c, --create-template         Create sample sheet template and exit
     -d, --dry-run                Show what would be run without executing
     -h, --help                   Show this help message
@@ -86,8 +87,8 @@ EXAMPLES:
     # Using multi-run sample sheet
     $0 -S samples.csv -i /path/to/fastq -o /path/to/output
 
-    # Using legacy sample sheet
-    $0 -S sample_sheet.xlsx -i /path/to/fastq -o /path/to/output
+    # Using legacy sample sheet with SLURM account
+    $0 -S sample_sheet.xlsx -i /path/to/fastq -o /path/to/output -A my_account
 
     # Run complete pipeline (including run/lane merge and validation)
     $0 -i /path/to/fastq -o /path/to/output
@@ -135,6 +136,7 @@ CREATE_TEMPLATE=false
 INPUT_DIR_ARG=""
 OUTPUT_DIR_ARG=""
 SAMPLE_SHEET_ARG=""
+SLURM_ACCOUNT_ARG=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -178,6 +180,10 @@ while [[ $# -gt 0 ]]; do
             SAMPLE_SHEET_ARG="$2"
             shift 2
             ;;
+        -A|--account)
+            SLURM_ACCOUNT_ARG="$2"
+            shift 2
+            ;;
         -c|--create-template)
             CREATE_TEMPLATE=true
             shift
@@ -209,6 +215,10 @@ fi
 
 if [ -n "$SAMPLE_SHEET_ARG" ]; then
     export SAMPLE_SHEET="$SAMPLE_SHEET_ARG"
+fi
+
+if [ -n "$SLURM_ACCOUNT_ARG" ]; then
+    export SLURM_ACCOUNT="$SLURM_ACCOUNT_ARG"
 fi
 
 export ASSEMBLY_MODE
@@ -825,6 +835,7 @@ submit_job() {
     cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING}"
     cmd+=",TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE}"
+    cmd+=",SLURM_ACCOUNT=${SLURM_ACCOUNT}"
     
     # Add log file specifications
     local script_basename=$(basename -- "$script" .sh)
@@ -892,6 +903,7 @@ echo "Output directory: $OUTPUT_DIR"
 echo "Sample sheet: ${SAMPLE_SHEET:-Auto-discovery}"
 echo "Assembly mode: $ASSEMBLY_MODE"
 echo "Binning mode: $([ "$TREATMENT_LEVEL_BINNING" = true ] && echo "treatment-level" || echo "sample-level")"
+echo "SLURM account: ${SLURM_ACCOUNT:-default}"
 echo "Start stage: $START_STAGE (${STAGE_NAMES[$START_STAGE]})"
 echo "End stage: $END_STAGE (${STAGE_NAMES[$END_STAGE]})"
 echo "Total samples: $(get_total_samples)"
