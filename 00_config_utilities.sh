@@ -38,6 +38,9 @@ export MAX_CONTAMINATION="${MAX_CONTAMINATION:-5}"
 # Conda setup
 export CONDA_BASE="${CONDA_BASE:-/sci/home/moshea/miniconda3}"
 
+# SLURM account (for job submission)
+export SLURM_ACCOUNT="${SLURM_ACCOUNT:-}"
+
 # File-based sample storage - ONLY initialize if not already set
 if [ -z "$SAMPLE_INFO_FILE" ]; then
     SAMPLE_INFO_FILE=""

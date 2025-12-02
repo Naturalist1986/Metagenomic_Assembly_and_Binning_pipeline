@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=coassembly
+#SBATCH --account=$SLURM_ACCOUNT
 #SBATCH --array=0-9%5
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
