@@ -525,12 +525,6 @@ stage_bin_reassembly() {
 
     mkdir -p "$output_dir"
 
-    # Check if already processed
-    if [ -d "${output_dir}/reassembled_bins" ] && [ "$(ls -A "${output_dir}/reassembled_bins/"*.fa 2>/dev/null)" ]; then
-        log "Bin reassembly already completed for $entity_name, skipping..."
-        return 0
-    fi
-
     # Find refined bins (from DAS Tool stage 04)
     if [ -n "$sample_name" ]; then
         local refined_bins_dir=$(get_refined_bins_dir "$sample_name" "$treatment")
