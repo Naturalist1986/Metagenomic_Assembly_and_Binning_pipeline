@@ -1,0 +1,17 @@
+﻿sample_name,treatment,read1,read2
+ILDRh2,IL,ILDRh2_1.fq.gz,ILDRh2_2.fq.gz
+ILDRh3,IL,ILDRh3_1.fq.gz,ILDRh3_2.fq.gz
+ILWRh1,IL,ILWRh1_1.fq.gz,ILWRh1_2.fq.gz
+ILWRh2,IL,ILWRh2_1.fq.gz,ILWRh2_2.fq.gz
+ILWRh3,IL,ILWRh3_1.fq.gz,ILWRh3_2.fq.gz
+ILWRh4,IL,ILWRh4_1.fq.gz,ILWRh4_2.fq.gz
+IMDRh1,IM,IMDRh1_1.fq.gz,IMDRh1_2.fq.gz
+IMDRh2,IM,IMDRh2_1.fq.gz,IMDRh2_2.fq.gz
+IMDRh3,IM,IMDRh3_1.fq.gz,IMDRh3_2.fq.gz
+IMDRh4,IM,IMDRh4_1.fq.gz,IMDRh4_2.fq.gz
+IMDRh5,IM,IMDRh5_1.fq.gz,IMDRh5_2.fq.gz
+IMWRh1,IM,IMWRh1_1.fq.gz,IMWRh1_2.fq.gz
+IMWRh2,IM,IMWRh2_1.fq.gz,IMWRh2_2.fq.gz
+IMWRh3,IM,IMWRh3_1.fq.gz,IMWRh3_2.fq.gz
+IMWRh4,IM,IMWRh4_1.fq.gz,IMWRh4_2.fq.gz
+IMWRh5,IM,IMWRh5_1.fq.gz,IMWRh5_2.fq.gz

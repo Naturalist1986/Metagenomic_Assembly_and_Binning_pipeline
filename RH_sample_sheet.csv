@@ -1,7 +1,0 @@
-sample,run,group,short_reads_1,short_reads_2,short_reads_platform
-sample1,1,RH,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_1_DKDN250001555-1A_22KVLLLT4_L6_1.fq.gz,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_1_DKDN250001555-1A_22KVLLLT4_L6_2.fq.gz,ILLUMINA
-sample2,1,RH,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_2_DKDN250001556-1A_22VYGNLT3_L3_1.fq.gz,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_2_DKDN250001556-1A_22VYGNLT3_L3_2.fq.gz,ILLUMINA
-sample2,2,RH,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_2_DKDN250001556-1A_22W2JCLT3_L1_1.fq.gz,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_2_DKDN250001556-1A_22W2JCLT3_L1_2.fq.gz,ILLUMINA
-sample3,1,RH,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_3_DKDN250001557-1A_22KVLLLT4_L6_1.fq.gz,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_3_DKDN250001557-1A_22KVLLLT4_L6_2.fq.gz,ILLUMINA
-sample4,1,RH,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_5_DKDN250001558-1A_22KVLLLT4_L6_1.fq.gz,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_5_DKDN250001558-1A_22KVLLLT4_L6_2.fq.gz,ILLUMINA
-sample5,1,RH,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_8_DKDN250001559-1A_22KVLLLT4_L6_1.fq.gz,/sci/backup/aerez/aerez/moshea/Efrat_Metagenomes_Novogene/RH_reads/RH_8_DKDN250001559-1A_22KVLLLT4_L6_2.fq.gz,ILLUMINA
