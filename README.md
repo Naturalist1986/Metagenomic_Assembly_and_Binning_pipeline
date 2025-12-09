@@ -86,30 +86,33 @@ The pipeline requires the following conda environments:
 
 ## Pipeline Stages
 
-### Pre-Processing Stages (-1 to 04)
+### Core Pipeline Stages (0-9)
 
 | Stage | Script | Description | Mode |
 |-------|--------|-------------|------|
-| -1 | `-01_merge_lanes.sh` | Lane/Run detection and merging | Per sample |
-| 00 | `00_quality_filtering.sh` | Quality filtering and adapter trimming | Per sample |
-| 0.5 | `00b_validate_repair.sh` | Read validation and repair | Per sample |
-| 01 | `01_assembly.sh` | Individual sample assembly | Per sample |
-| 01b | `01b_coassembly.sh` | Treatment-level coassembly | Per treatment |
-| 02 | `02_plasmid_detection.sh` | Plasmid detection (PlasClass, MOB-suite) | Per sample |
-| 03 | `03_binning.sh` | Multiple binning algorithms | Depends on mode |
-| 04 | `04_bin_refinement.sh` | DAS Tool refinement | Depends on mode |
+| 0 | `00_quality_filtering.sh` | Quality filtering and adapter trimming (Trimmomatic) | Per sample |
+| 1 | `00b_validate_repair.sh` | Read validation and repair | Per sample |
+| 2 | `01_assembly.sh` or `01b_coassembly.sh` | Assembly (MetaSPAdes) | Per sample or treatment |
+| 3 | `03_binning.sh` | Multiple binning algorithms (MetaBAT2, MaxBin2, CONCOCT) | Depends on mode |
+| 4 | `04_bin_refinement.sh` | DAS Tool bin refinement | Depends on mode |
+| 5 | `05_bin_reassembly.sh` | MetaWRAP bin reassembly | Depends on mode |
+| 6 | `06_magpurify.sh` | MAGpurify contamination removal | Depends on mode |
+| 7 | `07_checkm2.sh` | CheckM2 quality assessment | Depends on mode |
+| 8 | `07b_bin_selection.sh` | Select best bin version (orig/strict/permissive) | Depends on mode |
+| 9 | `08b_bin_collection.sh` | Bin collection, CoverM abundance, GTDB-Tk | Per treatment |
 
-### Post-Refinement Stages (05 to 10)
+### Optional Stages
 
-| Stage | Script | Description | Mode |
-|-------|--------|-------------|------|
-| 05 | `05_bin_reassembly.sh` | MetaWRAP reassembly | Depends on mode |
-| 06 | `06_magpurify.sh` | Contamination removal | Depends on mode |
-| 07 | `07_checkm2.sh` | Quality assessment | Depends on mode |
-| 7.5 | `07b_bin_selection.sh` | Select best bin versions | Depends on mode |
-| 08 | `08a_metawrap_quant.sh` | Quantify refined bins | Depends on mode |
-| 09 | `08b_bin_collection.sh` | Bin collection, consolidate abundance, GTDB-Tk | Per treatment |
-| 10 | `09_final_report.sh` | Generate taxonomy-labeled abundance plots | Single execution |
+| Stage | Script | Description | Mode | Flag |
+|-------|--------|-------------|------|------|
+| - | `-01_merge_lanes.sh` | Lane/Run detection and merging | Per sample | `--merge-lanes` |
+| - | `02_plasmid_detection.sh` | Plasmid detection (PlasClass, MOB-suite) | Per sample | `--plasmid-detection` |
+
+### Additional Tools
+
+| Tool | Script | Description | When to Run |
+|------|--------|-------------|-------------|
+| Final Report | `09_final_report.sh` | Cross-treatment comparison plots with taxonomy | After all treatments complete stage 9 |
 
 ---
 
@@ -145,44 +148,86 @@ DEFAULT_QOS="normal"
 
 ## Usage
 
+### Quick Start
+
+The easiest way to run the pipeline is using the `run_pipeline.sh` master script:
+
+```bash
+# Basic usage - runs stages 0-9 (no lane merging or plasmid detection)
+./run_pipeline.sh -i /path/to/fastq -o /path/to/output
+
+# With optional stages
+./run_pipeline.sh --merge-lanes --plasmid-detection -i /path/to/fastq -o /path/to/output
+
+# With SLURM account
+./run_pipeline.sh -i /path/to/fastq -o /path/to/output -A my_account
+
+# With sample sheet
+./run_pipeline.sh -S samples.csv -i /path/to/fastq -o /path/to/output
+
+# Help
+./run_pipeline.sh --help
+```
+
+See `./run_pipeline.sh --help` for all options including:
+- Start/end stage selection (`--start-stage`, `--end-stage`)
+- Assembly mode (`--assembly-mode individual` or `coassembly`)
+- Binning mode (`--treatment-level-binning`)
+- Specific treatments or samples (`--treatment`, `--sample`)
+- Dry run mode (`--dry-run`)
+
+### Manual Execution (Advanced)
+
+If you prefer to run stages manually:
+
 ## Sample-Level Binning Mode
 
 **Best for**: Samples with sufficient sequencing depth individually, no biological replication
 
 ### Configuration
 
-```bash
-# In 00_config_utilities.sh
-TREATMENT_LEVEL_BINNING=false
-```
+Configuration is done via command-line arguments to `run_pipeline.sh` or by setting environment variables:
+- `INPUT_DIR`: Directory containing FASTQ files
+- `OUTPUT_DIR`: Output directory for results
+- `ASSEMBLY_MODE`: `individual` or `coassembly`
+- `TREATMENT_LEVEL_BINNING`: `true` or `false`
 
-### Workflow
+### Manual Workflow
 
 ```bash
-# 1. Lane/Run Merge and Quality Control
-sbatch --array=0-N%10 -01_merge_lanes.sh
+# 1. Quality Control (stages 0-1)
 sbatch --array=0-N%10 00_quality_filtering.sh
 sbatch --array=0-N%10 00b_validate_repair.sh
 
-# 2. Assembly, Plasmid Detection, and Binning (per sample)
+# 2. Assembly and Binning (stages 2-4, per sample)
 sbatch --array=0-N%10 01_assembly.sh
-sbatch --array=0-N%10 02_plasmid_detection.sh
 sbatch --array=0-N%10 03_binning.sh
 sbatch --array=0-N%10 04_bin_refinement.sh
 
-# 3. Bin Improvement (per sample)
+# 3. Bin Improvement (stages 5-8, per sample)
 sbatch --array=0-N%10 05_bin_reassembly.sh
 sbatch --array=0-N%10 06_magpurify.sh
 sbatch --array=0-N%10 07_checkm2.sh
 sbatch --array=0-N%10 07b_bin_selection.sh
 
-# 4. Quantification and Reporting
-sbatch --array=0-N%10 08a_metawrap_quant.sh
-sbatch --array=0-N%10 08b_bin_collection.sh  # Per treatment
-sbatch 09_final_report.sh  # Single execution for all treatments
+# 4. Bin Collection (stage 9, per treatment)
+sbatch --array=0-M%5 08b_bin_collection.sh  # M = num treatments - 1
+
+# 5. Optional: Generate cross-treatment plots (run after all treatments complete)
+sbatch 09_final_report.sh
 ```
 
 Where `N` is the number of samples minus 1.
+
+### Optional Stages
+
+```bash
+# Lane/Run merging (if you have multi-lane or multi-run data)
+sbatch --array=0-N%10 -01_merge_lanes.sh
+
+# Plasmid detection (after assembly)
+sbatch --array=0-N%10 02_plasmid_detection.sh
+```
 
 ### Output Structure
 
@@ -246,36 +291,38 @@ output/
 
 ### Configuration
 
+Use command-line flags with `run_pipeline.sh`:
 ```bash
-# In 00_config_utilities.sh
-TREATMENT_LEVEL_BINNING=true
+./run_pipeline.sh --assembly-mode coassembly --treatment-level-binning \
+    -i /path/to/fastq -o /path/to/output
 ```
 
-### Workflow
+### Manual Workflow
 
 ```bash
-# 1. Lane/Run Merge and Quality Control (per sample)
-sbatch --array=0-N%10 -01_merge_lanes.sh
+# 1. Quality Control (stages 0-1, per sample)
 sbatch --array=0-N%10 00_quality_filtering.sh
 sbatch --array=0-N%10 00b_validate_repair.sh
 
-# 2. Coassembly, Plasmid Detection, and Binning (per treatment)
+# 2. Coassembly and Binning (stages 2-4, per treatment)
 sbatch --array=0-M%5 01b_coassembly.sh        # M = num treatments - 1
-sbatch --array=0-N%10 02_plasmid_detection.sh  # Per sample
 sbatch --array=0-M%5 03_binning.sh            # Per treatment
 sbatch --array=0-M%5 04_bin_refinement.sh
 
-# 3. Bin Improvement (ONCE per treatment)
+# 3. Bin Improvement (stages 5-8, per treatment)
 sbatch --array=0-M%5 05_bin_reassembly.sh
 sbatch --array=0-M%5 06_magpurify.sh
 sbatch --array=0-M%5 07_checkm2.sh
 sbatch --array=0-M%5 07b_bin_selection.sh
 
-# 4. Quantification and Reporting
-sbatch --array=0-M%5 08a_metawrap_quant.sh    # Once per treatment
-sbatch --array=0-M%5 08b_bin_collection.sh    # Per treatment: consolidate abundance, GTDB-Tk
-sbatch 09_final_report.sh                     # Single execution for all treatments
+# 4. Bin Collection (stage 9, per treatment)
+sbatch --array=0-M%5 08b_bin_collection.sh    # CoverM abundance + GTDB-Tk
+
+# 5. Optional: Cross-treatment plots (after all complete)
+sbatch 09_final_report.sh
 ```
+
+### Optional Stages (same as sample-level)
 
 ### Key Differences in Treatment-Level Mode
 
@@ -384,15 +431,15 @@ output/
 ```
 Raw Reads (Sample 1, 2, 3, ...)
     ↓
-Stage -1: Lane/Run Merge (per sample)
+[Optional: Lane/Run Merge (per sample) - use --merge-lanes]
     ↓
 Stage 0: Quality Filtering (per sample)
     ↓
-Stage 0.5: Read Validation & Repair (per sample)
+Stage 1: Read Validation & Repair (per sample)
     ↓
-Stage 1: Assembly (per sample)
+Stage 2: Assembly (per sample)
     ↓
-Stage 2: Plasmid Detection (per sample)
+[Optional: Plasmid Detection (per sample) - use --plasmid-detection]
     ↓
 Stage 3: Binning (per sample)
     ↓
@@ -404,16 +451,15 @@ Stage 6: MAGpurify (per sample)
     ↓
 Stage 7: CheckM2 (per sample)
     ↓
-Stage 7.5: Bin Selection (per sample)
-    ↓
-Stage 8: MetaWRAP Quant (per sample)
+Stage 8: Bin Selection (per sample)
     ↓
 Stage 9: Bin Collection (per treatment)
-    ├─→ Consolidate CoverM abundance
+    ├─→ Collect selected bins
+    ├─→ CoverM abundance quantification
     └─→ GTDB-Tk taxonomic classification
     ↓
-Stage 10: Final Report (single execution)
-    └─→ Taxonomy-labeled abundance plots
+[Optional: Final Report (run separately after all treatments complete)]
+    └─→ Cross-treatment comparison plots with taxonomy labels
 ```
 
 ### Treatment-Level Workflow
@@ -421,36 +467,35 @@ Stage 10: Final Report (single execution)
 ```
 Raw Reads (Samples in Treatment)
     ↓
-Stage -1: Lane/Run Merge (per sample)
+[Optional: Lane/Run Merge (per sample) - use --merge-lanes]
     ↓
 Stage 0: Quality Filtering (per sample)
     ↓
-Stage 0.5: Read Validation & Repair (per sample)
+Stage 1: Read Validation & Repair (per sample)
     ↓
-Stage 1b: Merge Reads & Coassembly (per treatment) ─────┐
+Stage 2: Coassembly (per treatment) ─────────────────────┐
     ↓                                                      │
-Stage 2: Plasmid Detection (per sample)                  │
+[Optional: Plasmid Detection (per sample) - use --plasmid-detection]
     ↓                                                      │
 Stage 3: Binning (per treatment)                         │
     ↓                                                      │
 Stage 4: Refinement (per treatment)                      │
     ↓                                                      │
-Stage 5: Reassembly (ONCE per treatment) ←───────────────┘
+Stage 5: Reassembly (per treatment) ←────────────────────┘
     ↓ (uses merged treatment reads)
-Stage 6: MAGpurify (ONCE per treatment)
-    ↓ (all bin versions)
-Stage 7: CheckM2 (ONCE per treatment)
+Stage 6: MAGpurify (per treatment)
+    ↓ (all bin versions: orig/strict/permissive)
+Stage 7: CheckM2 (per treatment)
     ↓ (quality assessment)
-Stage 7.5: Bin Selection (ONCE per treatment)
-    ↓ (selects best versions)
-Stage 8: MetaWRAP Quant (per treatment)
-    ↓
+Stage 8: Bin Selection (per treatment)
+    ↓ (selects best version per bin)
 Stage 9: Bin Collection (per treatment)
-    ├─→ Consolidate CoverM abundance
+    ├─→ Collect selected bins
+    ├─→ CoverM abundance quantification
     └─→ GTDB-Tk taxonomic classification
     ↓
-Stage 10: Final Report (single execution)
-    └─→ Taxonomy-labeled abundance plots for all treatments
+[Optional: Final Report (run separately after all treatments complete)]
+    └─→ Cross-treatment comparison plots with taxonomy labels
 ```
 
 ---
@@ -697,16 +742,24 @@ This pipeline is provided as-is for academic and research use.
 
 ---
 
-**Last Updated**: 2025-11-02
-**Pipeline Version**: 2.1
+**Last Updated**: 2025-12-09
+**Pipeline Version**: 2.2
 
 ## Recent Updates
 
+### Version 2.2 (2025-12-09)
+- **BREAKING CHANGE**: Renumbered stages to 0-9 (removed fractional stages 0.5 and 7.5)
+- **Removed**: Stage 8 (MetaWRAP Quant) - redundant quantification step
+- **Made Optional**: Lane merging and plasmid detection stages (use `--merge-lanes` and `--plasmid-detection` flags)
+- **Improved**: `run_pipeline.sh` master script with clearer help text and parameter handling
+- **Simplified**: Configuration now done via command-line arguments instead of editing config files
+- **Updated**: All documentation to reflect new stage numbering and workflow
+- **Removed**: Obsolete files (08_coverm.sh, coverm_refined.sh, debug_sample_parsing.sh, 08a_metawrap_quant.sh)
+
 ### Version 2.1 (2025-11-02)
-- Added Stage -1: Lane/Run detection and merging
-- Added Stage 2: Plasmid detection with PlasClass and MOB-suite
-- Added Stage 9: Bin collection with GTDB-Tk taxonomic classification
-- Added Stage 10: Final report generation with taxonomy-labeled plots
-- Updated stage numbering to reflect actual pipeline architecture
+- Added Lane/Run detection and merging capability
+- Added Plasmid detection with PlasClass and MOB-suite
+- Added Bin collection with GTDB-Tk taxonomic classification
+- Added Final report generation with taxonomy-labeled plots
 - Enhanced support for multi-run sample sheets
-- Improved workflow documentation and output structure descriptions
+- Improved workflow documentation

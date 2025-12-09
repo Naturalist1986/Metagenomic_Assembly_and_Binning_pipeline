@@ -4,8 +4,8 @@
 # UPDATED: Now supports sample sheets with multiple runs per sample
 
 # Default values
-START_STAGE=-1  # Start from lane merging by default
-END_STAGE=10    # Updated to new final stage
+START_STAGE=0  # Start from quality filtering by default (skip optional merge/plasmid stages)
+END_STAGE=9    # Updated: removed stage 8 (metawrap quant)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PIPELINE_SCRIPT_DIR="$SCRIPT_DIR"  # Export for SLURM jobs
 
@@ -13,6 +13,8 @@ SPECIFIC_TREATMENTS=()
 SPECIFIC_SAMPLES=()
 ASSEMBLY_MODE="individual"
 TREATMENT_LEVEL_BINNING=false
+SKIP_MERGE_LANES=true  # Skip lane merging by default (optional stage)
+SKIP_PLASMID_DETECTION=true  # Skip plasmid detection by default (optional stage)
 
 # Usage function
 usage() {
@@ -23,8 +25,8 @@ Master script to run the complete metagenomic pipeline.
 Supports multiple sample sheet formats including multi-run datasets.
 
 OPTIONS:
-    -s, --start-stage NUM         Start from stage NUM (-1 to 10) [default: -1]
-    -e, --end-stage NUM           End at stage NUM (-1 to 10) [default: 10]
+    -s, --start-stage NUM         Start from stage NUM (0 to 9) [default: 0]
+    -e, --end-stage NUM           End at stage NUM (0 to 9) [default: 9]
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
     -t, --treatment NAME          Run only for specific treatment/group (can be used multiple times)
@@ -33,9 +35,11 @@ OPTIONS:
     -o, --output-dir PATH         Output directory for results
     -S, --sample-sheet PATH       Sample sheet (Excel, CSV, or TSV)
     -A, --account NAME            SLURM account name for job submission
+    --merge-lanes                 Include lane/run merging stage (optional, off by default)
+    --plasmid-detection           Include plasmid detection stage (optional, off by default)
     -c, --create-template         Create sample sheet template and exit
-    -d, --dry-run                Show what would be run without executing
-    -h, --help                   Show this help message
+    -d, --dry-run                 Show what would be run without executing
+    -h, --help                    Show this help message
 
 SAMPLE SHEET FORMATS:
     The pipeline supports two sample sheet formats:
@@ -61,20 +65,24 @@ SAMPLE SHEET FORMATS:
         - Format is auto-detected based on column headers
 
 STAGES:
-   -1  - Lane/Run Detection & Merge (auto-detects and merges multiple lanes/runs)
     0  - Quality Filtering (Trimmomatic)
-  0.5  - Validation & Repair (validates paired-end sync, repairs if needed)
-    1  - Assembly (MetaSPAdes - individual or co-assembly)
-    2  - Plasmid Detection
+    1  - Validation & Repair (validates paired-end sync, repairs if needed)
+    2  - Assembly (MetaSPAdes - individual or co-assembly)
     3  - Binning (sample-level or treatment-level based on -b flag)
-    4  - Bin Refinement (sample-level or treatment-level based on -b flag)
-    5  - Bin Reassembly (sample-level or treatment-level based on -b flag)
-    6  - MAGpurify (sample-level or treatment-level based on -b flag)
-    7  - CheckM2 (sample-level or treatment-level based on -b flag)
-  7.5  - Bin Selection (selects best reassembly version per bin)
-    8  - MetaWRAP Quant (quantifies refined bins before reassembly)
-    9  - Bin Collection (per treatment: consolidate CoverM abundance, run GTDB-Tk)
-   10  - Final Report (taxonomy-labeled abundance plots for all treatments)
+    4  - Bin Refinement (DAS Tool - sample-level or treatment-level based on -b flag)
+    5  - Bin Reassembly (MetaWRAP - sample-level or treatment-level based on -b flag)
+    6  - MAGpurify (contamination removal - sample-level or treatment-level based on -b flag)
+    7  - CheckM2 (quality assessment - sample-level or treatment-level based on -b flag)
+    8  - Bin Selection (selects best reassembly version: orig/strict/permissive)
+    9  - Bin Collection (per treatment: collects selected bins, runs CoverM & GTDB-Tk)
+
+OPTIONAL STAGES (use flags to enable):
+    --merge-lanes        Lane/Run Detection & Merge (auto-detects and merges multiple lanes/runs)
+    --plasmid-detection  Plasmid Detection (PlasClass and MOB-suite - runs after assembly)
+
+ADDITIONAL TOOLS (run separately after pipeline completes):
+    09_final_report.sh   Generate cross-treatment comparison plots with taxonomy labels
+                         (Requires all treatments to complete stage 9 first)
 
 BINNING MODES:
     By default, binning is performed at the sample level (one binning job per sample).
@@ -84,48 +92,47 @@ BINNING MODES:
     - Uses 03_binning_treatment_level.sh instead of 03_binning.sh
 
 EXAMPLES:
-    # Using multi-run sample sheet
-    $0 -S samples.csv -i /path/to/fastq -o /path/to/output
-
-    # Using legacy sample sheet with SLURM account
-    $0 -S sample_sheet.xlsx -i /path/to/fastq -o /path/to/output -A my_account
-
-    # Run complete pipeline (including run/lane merge and validation)
+    # Run complete pipeline (default: stages 0-9, no lane merge or plasmid detection)
     $0 -i /path/to/fastq -o /path/to/output
 
-    # Skip lane merging (if already done or single-lane/run samples)
-    $0 --start-stage 0 -i /path/to/fastq -o /path/to/output
+    # Run with lane merging for multi-run samples
+    $0 --merge-lanes -i /path/to/fastq -o /path/to/output
+
+    # Run with plasmid detection
+    $0 --plasmid-detection -i /path/to/fastq -o /path/to/output
+
+    # Run with all optional stages
+    $0 --merge-lanes --plasmid-detection -i /path/to/fastq -o /path/to/output
+
+    # Using sample sheet with SLURM account
+    $0 -S samples.csv -i /path/to/fastq -o /path/to/output -A my_account
 
     # Co-assembly with treatment-level binning
     $0 --assembly-mode coassembly --treatment-level-binning \\
        -i /path/to/fastq -o /path/to/output
 
-    # Treatment-level binning for specific treatment
-    $0 --treatment control --treatment-level-binning \\
-       -S samples.csv -i /path/to/fastq -o /path/to/output
+    # Run specific treatment only
+    $0 --treatment control -i /path/to/fastq -o /path/to/output
 
-    # Multiple specific treatments
-    $0 --treatment control --treatment treated \\
-       -S samples.csv -i /path/to/fastq -o /path/to/output
+    # Run specific samples only
+    $0 --sample sample1 --sample sample2 -i /path/to/fastq -o /path/to/output
 
-    # Multiple specific samples
-    $0 --sample sample1 --sample sample2 --sample sample3 \\
-       -i /path/to/fastq -o /path/to/output
+    # Run only quality filtering and validation (stages 0-1)
+    $0 --start-stage 0 --end-stage 1 -i /path/to/fastq -o /path/to/output
 
-    # Run only quality filtering and validation
-    $0 --start-stage 0 --end-stage 0.5 -i /path/to/fastq -o /path/to/output
+    # Dry run to preview execution
+    $0 --dry-run -i /path/to/fastq -o /path/to/output
 
-    # Dry run to preview what would be executed
-    $0 --dry-run -S samples.csv -i /path/to/fastq -o /path/to/output
-
-    # Create template for legacy format
+    # Create sample sheet template
     $0 --create-template -i /path/to/fastq
 
 NOTES:
-    - Stage -1 automatically handles both multiple lanes and multiple runs
-    - Multi-run format is recommended for complex sequencing designs
+    - Optional stages (lane merging, plasmid detection) are OFF by default
+    - Use --merge-lanes if you have multiple lanes/runs per sample that need merging
+    - Use --plasmid-detection to identify plasmid contigs and mobile elements
     - File paths in sample sheets should be relative to INPUT_DIR
     - The pipeline auto-detects sample sheet format from column headers
+    - Set INPUT_DIR and OUTPUT_DIR or they will be prompted
 
 EOF
 }
@@ -183,6 +190,14 @@ while [[ $# -gt 0 ]]; do
         -A|--account)
             SLURM_ACCOUNT_ARG="$2"
             shift 2
+            ;;
+        --merge-lanes)
+            SKIP_MERGE_LANES=false
+            shift
+            ;;
+        --plasmid-detection)
+            SKIP_PLASMID_DETECTION=false
+            shift
             ;;
         -c|--create-template)
             CREATE_TEMPLATE=true
@@ -248,15 +263,14 @@ is_in_array() {
     return 1
 }
 
-# Function to validate stage numbers (supports -1, 0.5, and 7.5)
+# Function to validate stage numbers (0-9)
 validate_stage() {
     local stage="$1"
     local stage_name="$2"
 
-    # Check if it's a valid stage number
-    if [[ "$stage" != "-1" && "$stage" != "0" && "$stage" != "0.5" && "$stage" != "7.5" ]] && \
-       ! [[ "$stage" =~ ^[1-9]$|^1[0-2]$ ]]; then
-        echo "Error: $stage_name must be -1, 0, 0.5, 1-12, or 7.5"
+    # Check if it's a valid stage number (0-9 only)
+    if ! [[ "$stage" =~ ^[0-9]$ ]]; then
+        echo "Error: $stage_name must be 0-9"
         return 1
     fi
     return 0
@@ -271,23 +285,18 @@ if ! validate_stage "$END_STAGE" "End stage"; then
     exit 1
 fi
 
-# Compare stages (handle fractional and negative)
+# Compare stages (simple integer comparison)
 compare_stages() {
     local stage1="$1"
     local stage2="$2"
     local op="$3"  # gt, ge, lt, le, eq
-    
-    # Convert to comparable format (multiply by 10 and add 100 to handle negatives)
-    # -1 becomes 90, 0 becomes 100, 0.5 becomes 105, 1 becomes 110, etc.
-    local s1=$(echo "$stage1" | awk '{print ($1 + 10) * 10}')
-    local s2=$(echo "$stage2" | awk '{print ($1 + 10) * 10}')
-    
+
     case "$op" in
-        gt) [ $(echo "$s1 > $s2" | bc) -eq 1 ] ;;
-        ge) [ $(echo "$s1 >= $s2" | bc) -eq 1 ] ;;
-        lt) [ $(echo "$s1 < $s2" | bc) -eq 1 ] ;;
-        le) [ $(echo "$s1 <= $s2" | bc) -eq 1 ] ;;
-        eq) [ $(echo "$s1 == $s2" | bc) -eq 1 ] ;;
+        gt) [ "$stage1" -gt "$stage2" ] ;;
+        ge) [ "$stage1" -ge "$stage2" ] ;;
+        lt) [ "$stage1" -lt "$stage2" ] ;;
+        le) [ "$stage1" -le "$stage2" ] ;;
+        eq) [ "$stage1" -eq "$stage2" ] ;;
     esac
 }
 
@@ -350,39 +359,42 @@ fi
 export TREATMENTS_FILE="${WORK_DIR}/treatments.txt"
 export SAMPLE_INFO_FILE="${WORK_DIR}/sample_info.txt"
 
-# Define stage names and scripts
+# Define stage names and scripts (renumbered, removed stage 8 metawrap quant)
 declare -A STAGE_NAMES=(
-    [-1]="Lane/Run Detection & Merge"
     [0]="Quality Filtering"
-    [0.5]="Validation & Repair"
-    [1]="Assembly"
-    [2]="Plasmid Detection"
+    [1]="Validation & Repair"
+    [2]="Assembly"
     [3]="Binning"
     [4]="Bin Refinement"
     [5]="Bin Reassembly"
     [6]="MAGpurify"
     [7]="CheckM2"
-    [7.5]="Bin Selection"
-    [8]="MetaWRAP Quant"
-    [9]="Bin Collection (per treatment: consolidate abundance, GTDB-Tk)"
-    [10]="Final Report (taxonomy-labeled abundance plots)"
+    [8]="Bin Selection"
+    [9]="Bin Collection (per treatment: collect bins, CoverM abundance, GTDB-Tk)"
 )
 
 declare -A STAGE_SCRIPTS=(
-    [-1]="-01_merge_lanes.sh"
     [0]="00_quality_filtering.sh"
-    [0.5]="00b_validate_repair.sh"
-    [1]="01_assembly.sh"  # Will be updated based on mode
-    [2]="02_plasmid_detection.sh"
+    [1]="00b_validate_repair.sh"
+    [2]="01_assembly.sh"  # Will be updated based on assembly mode
     [3]="03_binning.sh"  # Will be updated based on binning mode
     [4]="04_bin_refinement.sh"
     [5]="05_bin_reassembly.sh"
     [6]="06_magpurify.sh"
     [7]="07_checkm2.sh"
-    [7.5]="07b_bin_selection.sh"
-    [8]="08a_metawrap_quant.sh"
+    [8]="07b_bin_selection.sh"
     [9]="08b_bin_collection.sh"
-    [10]="09_final_report.sh"
+)
+
+# Optional stage scripts (only run if flags are set)
+declare -A OPTIONAL_STAGE_NAMES=(
+    [merge_lanes]="Lane/Run Detection & Merge"
+    [plasmid_detection]="Plasmid Detection"
+)
+
+declare -A OPTIONAL_STAGE_SCRIPTS=(
+    [merge_lanes]="-01_merge_lanes.sh"
+    [plasmid_detection]="02_plasmid_detection.sh"
 )
 
 # Function to get the correct assembly script based on mode
@@ -404,16 +416,16 @@ get_binning_script() {
 }
 
 # Update assembly script based on mode
-STAGE_SCRIPTS[1]=$(get_assembly_script)
+STAGE_SCRIPTS[2]=$(get_assembly_script)
 
 # Update binning script based on mode
 STAGE_SCRIPTS[3]=$(get_binning_script)
 
 # Update stage names to reflect modes
 if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
-    STAGE_NAMES[1]="Co-Assembly (per treatment)"
+    STAGE_NAMES[2]="Co-Assembly (per treatment)"
 else
-    STAGE_NAMES[1]="Assembly (per sample)"
+    STAGE_NAMES[2]="Assembly (per sample)"
 fi
 
 if [ "$TREATMENT_LEVEL_BINNING" = true ]; then
@@ -422,16 +434,14 @@ if [ "$TREATMENT_LEVEL_BINNING" = true ]; then
     STAGE_NAMES[5]="Bin Reassembly (treatment-level)"
     STAGE_NAMES[6]="MAGpurify (treatment-level)"
     STAGE_NAMES[7]="CheckM2 (treatment-level)"
-    STAGE_NAMES[7.5]="Bin Selection (treatment-level)"
-    STAGE_NAMES[8]="MetaWRAP Quant (treatment-level)"
+    STAGE_NAMES[8]="Bin Selection (treatment-level)"
 else
     STAGE_NAMES[3]="Binning (sample-level)"
     STAGE_NAMES[4]="Bin Refinement (sample-level)"
     STAGE_NAMES[5]="Bin Reassembly (sample-level)"
     STAGE_NAMES[6]="MAGpurify (sample-level)"
     STAGE_NAMES[7]="CheckM2 (sample-level)"
-    STAGE_NAMES[7.5]="Bin Selection (sample-level)"
-    STAGE_NAMES[8]="MetaWRAP Quant (sample-level)"
+    STAGE_NAMES[8]="Bin Selection (sample-level)"
 fi
 
 # Function to check if filters match any samples
@@ -536,8 +546,8 @@ calculate_array_size() {
     
     local total_samples=$(get_total_samples)
     
-    # Special handling for stage 1 in coassembly mode
-    if [ "$stage" = "1" ] && [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+    # Special handling for stage 2 (Assembly) in coassembly mode
+    if [ "$stage" = "2" ] && [ "$ASSEMBLY_MODE" = "coassembly" ]; then
         # Co-assembly: one job per treatment
         local treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -605,10 +615,9 @@ calculate_array_size() {
         return
     fi
 
-    # Special handling for stages 5, 6, 7, 7.5, 8 in treatment-level binning mode
+    # Special handling for stages 5, 6, 7, 8 in treatment-level binning mode
     if [ "$TREATMENT_LEVEL_BINNING" = true ] && \
-       ( [ "$stage" = "5" ] || [ "$stage" = "6" ] || [ "$stage" = "7" ] || \
-         [ "$stage" = "7.5" ] || [ "$stage" = "8" ] ); then
+       ( [ "$stage" = "5" ] || [ "$stage" = "6" ] || [ "$stage" = "7" ] || [ "$stage" = "8" ] ); then
         # Treatment-level: run once per treatment
         local treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -630,7 +639,7 @@ calculate_array_size() {
         return
     fi
 
-    # Sample-level stages (-1, 0, 0.5, 1-8 in individual mode)
+    # Sample-level stages (0-8 in individual mode)
     if compare_stages "$stage" "8" "le"; then
         # Filter samples if specific treatment or sample requested
         if [ ${#SPECIFIC_TREATMENTS[@]} -gt 0 ] || [ ${#SPECIFIC_SAMPLES[@]} -gt 0 ]; then
@@ -656,7 +665,8 @@ calculate_array_size() {
             echo "$total_samples"
         fi
     elif [ "$stage" = "9" ]; then
-        # Stage 9: Bin collection - treatment-level (one job per treatment)
+        # Stage 9: Final Report - treatment-level (one job per treatment)
+        # This includes bin collection, CoverM abundance, GTDB-Tk, and taxonomy plots
         local treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
             if [ ${#SPECIFIC_TREATMENTS[@]} -gt 0 ]; then
@@ -674,9 +684,6 @@ calculate_array_size() {
         else
             echo "0"
         fi
-    elif [ "$stage" = "10" ]; then
-        # Stage 10: Final report - runs once for entire pipeline (not an array job)
-        echo "1"
     else
         # Unknown stage
         echo "0"
@@ -689,8 +696,8 @@ get_filtered_indices() {
     total_samples=$(get_total_samples)
     indices=()
     
-    # Special handling for stage 1 in coassembly mode
-    if [ "$stage" = "1" ] && [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+    # Special handling for stage 2 (Assembly) in coassembly mode
+    if [ "$stage" = "2" ] && [ "$ASSEMBLY_MODE" = "coassembly" ]; then
         # Co-assembly: return treatment indices
         treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -740,10 +747,9 @@ get_filtered_indices() {
         return
     fi
 
-    # Special handling for stages 5, 6, 7, 7.5, 8 in treatment-level binning mode
+    # Special handling for stages 5, 6, 7, 8 in treatment-level binning mode
     if [ "$TREATMENT_LEVEL_BINNING" = true ] && \
-       ( [ "$stage" = "5" ] || [ "$stage" = "6" ] || [ "$stage" = "7" ] || \
-         [ "$stage" = "7.5" ] || [ "$stage" = "8" ] ); then
+       ( [ "$stage" = "5" ] || [ "$stage" = "6" ] || [ "$stage" = "7" ] || [ "$stage" = "8" ] ); then
         # Treatment-level: return treatment indices
         treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -759,7 +765,7 @@ get_filtered_indices() {
         return
     fi
 
-    # Sample-level stages
+    # Sample-level stages (0-8)
     if compare_stages "$stage" "8" "le"; then
         for i in $(seq 0 $((total_samples - 1))); do
             sample_info=$(get_sample_info_by_index $i 2>/dev/null)
@@ -778,7 +784,7 @@ get_filtered_indices() {
             fi
         done
     elif [ "$stage" = "9" ]; then
-        # Stage 9: Bin collection - treatment-level
+        # Stage 9: Final Report - treatment-level (includes bin collection, abundance, GTDB-Tk, plots)
         treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
             local treatments=($treatments_list)
@@ -789,9 +795,6 @@ get_filtered_indices() {
                 indices+=($i)
             done
         fi
-    elif [ "$stage" = "10" ]; then
-        # Stage 10: Final report - single execution (index 0)
-        indices+=(0)
     fi
 
     echo "${indices[@]}"
@@ -972,45 +975,153 @@ echo ""
 previous_job_id=""
 jobs_submitted=0
 
-# Create list of stages to run (handle fractional stages)
-STAGES_TO_RUN=()
-current_stage=$START_STAGE
+# Handle optional stages first (if enabled)
+OPTIONAL_STAGES_TO_RUN=()
 
-while compare_stages "$current_stage" "$END_STAGE" "le"; do
-    STAGES_TO_RUN+=("$current_stage")
+if [ "$SKIP_MERGE_LANES" = false ]; then
+    OPTIONAL_STAGES_TO_RUN+=("merge_lanes")
+fi
 
-    # Increment stage (handle fractional stages: 0.5 and 7.5)
-    if [ "$current_stage" = "0" ] && compare_stages "0.5" "$END_STAGE" "le"; then
-        current_stage="0.5"
-    elif [ "$current_stage" = "0.5" ]; then
-        current_stage="1"
-    elif [ "$current_stage" = "7" ] && compare_stages "7.5" "$END_STAGE" "le"; then
-        current_stage="7.5"
-    elif [ "$current_stage" = "7.5" ]; then
-        current_stage="8"
-    elif [ "$current_stage" = "-1" ]; then
-        current_stage="0"
-    else
-        current_stage=$((current_stage + 1))
+# Submit optional stages
+for opt_stage in "${OPTIONAL_STAGES_TO_RUN[@]}"; do
+    local script="${OPTIONAL_STAGE_SCRIPTS[$opt_stage]}"
+    local stage_name="${OPTIONAL_STAGE_NAMES[$opt_stage]}"
+
+    echo "📄 Processing optional stage: $stage_name"
+    echo "🚀 Submitting optional stage: $stage_name"
+
+    # Build and submit sbatch command similar to submit_job function
+    # (simplified version, assumes sample-level processing)
+    local slurm_log_dir="${OUTPUT_DIR}/logs/slurm"
+    mkdir -p "$slurm_log_dir"
+
+    local total_samples=$(get_total_samples)
+    if [ $total_samples -eq 0 ]; then
+        echo "⚠️  No samples to process for optional stage $opt_stage"
+        continue
     fi
+
+    local cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
+    cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
+    cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},TREATMENTS_FILE=${TREATMENTS_FILE}"
+    cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
+
+    if [ -n "$previous_job_id" ]; then
+        cmd+=" --dependency=afterok:${previous_job_id}"
+    fi
+
+    if [ -n "$SLURM_ACCOUNT" ]; then
+        cmd+=" --account=${SLURM_ACCOUNT}"
+    fi
+
+    local script_basename=$(basename -- "$script" .sh)
+    cmd+=" --output=${slurm_log_dir}/${script_basename}_%A_%a.log"
+    cmd+=" --error=${slurm_log_dir}/${script_basename}_%A_%a.err"
+
+    if [ $total_samples -gt 1 ]; then
+        cmd+=" --array=0-$((total_samples - 1))"
+    elif [ $total_samples -eq 1 ]; then
+        cmd+=" --array=0"
+    fi
+
+    cmd+=" ${SCRIPT_DIR}/${script}"
+
+    if [ "$DRY_RUN" = true ]; then
+        echo "🔍 [DRY RUN] Would execute: $cmd"
+        previous_job_id="999999"
+    else
+        echo "   Command: $cmd"
+        result=$($cmd 2>&1)
+        if [[ $result =~ Submitted\ batch\ job\ ([0-9]+) ]]; then
+            previous_job_id="${BASH_REMATCH[1]}"
+            echo "✅ Submitted job $previous_job_id for optional stage ($stage_name)"
+            ((jobs_submitted++))
+        else
+            echo "❌ Error submitting optional stage job: $result"
+        fi
+    fi
+    echo
 done
 
+# Now handle main pipeline stages (0-9)
+STAGES_TO_RUN=()
+for stage in $(seq $START_STAGE $END_STAGE); do
+    # Skip plasmid detection stage if it's between other stages
+    # Actually, plasmid detection is now optional, so we handle it separately below
+    STAGES_TO_RUN+=("$stage")
+done
+
+# Submit main pipeline stages
 for stage in "${STAGES_TO_RUN[@]}"; do
     echo "📄 Processing stage $stage: ${STAGE_NAMES[$stage]}"
-    
+
     job_id=$(submit_job "$stage" "$previous_job_id")
-    
+
     if [ -z "$job_id" ] || [ "$job_id" = "0" ]; then
         echo "❌ Error: Failed to submit job for stage $stage"
         exit 1
     fi
-    
+
     if [ "$job_id" != "999999" ]; then  # Not a dry run fake ID
         ((jobs_submitted++))
     fi
-    
+
     previous_job_id="${job_id}"
     echo
+
+    # Insert plasmid detection after assembly if enabled
+    if [ "$stage" = "2" ] && [ "$SKIP_PLASMID_DETECTION" = false ]; then
+        echo "📄 Processing optional stage: Plasmid Detection"
+
+        local script="${OPTIONAL_STAGE_SCRIPTS[plasmid_detection]}"
+        local stage_name="${OPTIONAL_STAGE_NAMES[plasmid_detection]}"
+        local slurm_log_dir="${OUTPUT_DIR}/logs/slurm"
+
+        local total_samples=$(get_total_samples)
+        if [ $total_samples -gt 0 ]; then
+            local cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
+            cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
+            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},TREATMENTS_FILE=${TREATMENTS_FILE}"
+            cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
+
+            if [ -n "$previous_job_id" ]; then
+                cmd+=" --dependency=afterok:${previous_job_id}"
+            fi
+
+            if [ -n "$SLURM_ACCOUNT" ]; then
+                cmd+=" --account=${SLURM_ACCOUNT}"
+            fi
+
+            local script_basename=$(basename -- "$script" .sh)
+            cmd+=" --output=${slurm_log_dir}/${script_basename}_%A_%a.log"
+            cmd+=" --error=${slurm_log_dir}/${script_basename}_%A_%a.err"
+
+            if [ $total_samples -gt 1 ]; then
+                cmd+=" --array=0-$((total_samples - 1))"
+            else
+                cmd+=" --array=0"
+            fi
+
+            cmd+=" ${SCRIPT_DIR}/${script}"
+
+            if [ "$DRY_RUN" = true ]; then
+                echo "🔍 [DRY RUN] Would execute: $cmd"
+                previous_job_id="999999"
+            else
+                echo "🚀 Submitting optional stage: $stage_name"
+                echo "   Command: $cmd"
+                result=$($cmd 2>&1)
+                if [[ $result =~ Submitted\ batch\ job\ ([0-9]+) ]]; then
+                    previous_job_id="${BASH_REMATCH[1]}"
+                    echo "✅ Submitted job $previous_job_id for optional stage ($stage_name)"
+                    ((jobs_submitted++))
+                else
+                    echo "❌ Error submitting optional stage job: $result"
+                fi
+            fi
+            echo
+        fi
+    fi
 done
 
 echo "========================================"
