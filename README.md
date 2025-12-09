@@ -91,28 +91,28 @@ The pipeline requires the following conda environments:
 | Stage | Script | Description | Mode |
 |-------|--------|-------------|------|
 | 0 | `00_quality_filtering.sh` | Quality filtering and adapter trimming (Trimmomatic) | Per sample |
-| 1 | `00b_validate_repair.sh` | Read validation and repair | Per sample |
-| 2 | `01_assembly.sh` or `01b_coassembly.sh` | Assembly (MetaSPAdes) | Per sample or treatment |
+| 1 | `01_validate_repair.sh` | Read validation and repair | Per sample |
+| 2 | `02_assembly.sh` or `02_coassembly.sh` | Assembly (MetaSPAdes) | Per sample or treatment |
 | 3 | `03_binning.sh` | Multiple binning algorithms (MetaBAT2, MaxBin2, CONCOCT) | Depends on mode |
 | 4 | `04_bin_refinement.sh` | DAS Tool bin refinement | Depends on mode |
 | 5 | `05_bin_reassembly.sh` | MetaWRAP bin reassembly | Depends on mode |
 | 6 | `06_magpurify.sh` | MAGpurify contamination removal | Depends on mode |
 | 7 | `07_checkm2.sh` | CheckM2 quality assessment | Depends on mode |
-| 8 | `07b_bin_selection.sh` | Select best bin version (orig/strict/permissive) | Depends on mode |
-| 9 | `08b_bin_collection.sh` | Bin collection, CoverM abundance, GTDB-Tk | Per treatment |
+| 8 | `08_bin_selection.sh` | Select best bin version (orig/strict/permissive) | Depends on mode |
+| 9 | `09_bin_collection.sh` | Bin collection, CoverM abundance, GTDB-Tk | Per treatment |
 
 ### Optional Stages
 
 | Stage | Script | Description | Mode | Flag |
 |-------|--------|-------------|------|------|
 | - | `-01_merge_lanes.sh` | Lane/Run detection and merging | Per sample | `--merge-lanes` |
-| - | `02_plasmid_detection.sh` | Plasmid detection (PlasClass, MOB-suite) | Per sample | `--plasmid-detection` |
+| - | `plasmid_detection.sh` | Plasmid detection (PlasClass, MOB-suite) | Per sample | `--plasmid-detection` |
 
 ### Additional Tools
 
 | Tool | Script | Description | When to Run |
 |------|--------|-------------|-------------|
-| Final Report | `09_final_report.sh` | Cross-treatment comparison plots with taxonomy | After all treatments complete stage 9 |
+| Final Report | `final_report.sh` | Cross-treatment comparison plots with taxonomy | After all treatments complete stage 9 |
 
 ---
 
@@ -197,10 +197,10 @@ Configuration is done via command-line arguments to `run_pipeline.sh` or by sett
 ```bash
 # 1. Quality Control (stages 0-1)
 sbatch --array=0-N%10 00_quality_filtering.sh
-sbatch --array=0-N%10 00b_validate_repair.sh
+sbatch --array=0-N%10 01_validate_repair.sh
 
 # 2. Assembly and Binning (stages 2-4, per sample)
-sbatch --array=0-N%10 01_assembly.sh
+sbatch --array=0-N%10 02_assembly.sh
 sbatch --array=0-N%10 03_binning.sh
 sbatch --array=0-N%10 04_bin_refinement.sh
 
@@ -208,13 +208,13 @@ sbatch --array=0-N%10 04_bin_refinement.sh
 sbatch --array=0-N%10 05_bin_reassembly.sh
 sbatch --array=0-N%10 06_magpurify.sh
 sbatch --array=0-N%10 07_checkm2.sh
-sbatch --array=0-N%10 07b_bin_selection.sh
+sbatch --array=0-N%10 08_bin_selection.sh
 
 # 4. Bin Collection (stage 9, per treatment)
-sbatch --array=0-M%5 08b_bin_collection.sh  # M = num treatments - 1
+sbatch --array=0-M%5 09_bin_collection.sh  # M = num treatments - 1
 
 # 5. Optional: Generate cross-treatment plots (run after all treatments complete)
-sbatch 09_final_report.sh
+sbatch final_report.sh
 ```
 
 Where `N` is the number of samples minus 1.
@@ -226,7 +226,7 @@ Where `N` is the number of samples minus 1.
 sbatch --array=0-N%10 -01_merge_lanes.sh
 
 # Plasmid detection (after assembly)
-sbatch --array=0-N%10 02_plasmid_detection.sh
+sbatch --array=0-N%10 plasmid_detection.sh
 ```
 
 ### Output Structure
@@ -302,10 +302,10 @@ Use command-line flags with `run_pipeline.sh`:
 ```bash
 # 1. Quality Control (stages 0-1, per sample)
 sbatch --array=0-N%10 00_quality_filtering.sh
-sbatch --array=0-N%10 00b_validate_repair.sh
+sbatch --array=0-N%10 01_validate_repair.sh
 
 # 2. Coassembly and Binning (stages 2-4, per treatment)
-sbatch --array=0-M%5 01b_coassembly.sh        # M = num treatments - 1
+sbatch --array=0-M%5 02_coassembly.sh        # M = num treatments - 1
 sbatch --array=0-M%5 03_binning.sh            # Per treatment
 sbatch --array=0-M%5 04_bin_refinement.sh
 
@@ -313,13 +313,13 @@ sbatch --array=0-M%5 04_bin_refinement.sh
 sbatch --array=0-M%5 05_bin_reassembly.sh
 sbatch --array=0-M%5 06_magpurify.sh
 sbatch --array=0-M%5 07_checkm2.sh
-sbatch --array=0-M%5 07b_bin_selection.sh
+sbatch --array=0-M%5 08_bin_selection.sh
 
 # 4. Bin Collection (stage 9, per treatment)
-sbatch --array=0-M%5 08b_bin_collection.sh    # CoverM abundance + GTDB-Tk
+sbatch --array=0-M%5 09_bin_collection.sh    # CoverM abundance + GTDB-Tk
 
 # 5. Optional: Cross-treatment plots (after all complete)
-sbatch 09_final_report.sh
+sbatch final_report.sh
 ```
 
 ### Optional Stages (same as sample-level)

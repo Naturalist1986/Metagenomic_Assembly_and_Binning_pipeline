@@ -81,7 +81,7 @@ OPTIONAL STAGES (use flags to enable):
     --plasmid-detection  Plasmid Detection (PlasClass and MOB-suite - runs after assembly)
 
 ADDITIONAL TOOLS (run separately after pipeline completes):
-    09_final_report.sh   Generate cross-treatment comparison plots with taxonomy labels
+    final_report.sh      Generate cross-treatment comparison plots with taxonomy labels
                          (Requires all treatments to complete stage 9 first)
 
 BINNING MODES:
@@ -375,15 +375,15 @@ declare -A STAGE_NAMES=(
 
 declare -A STAGE_SCRIPTS=(
     [0]="00_quality_filtering.sh"
-    [1]="00b_validate_repair.sh"
-    [2]="01_assembly.sh"  # Will be updated based on assembly mode
+    [1]="01_validate_repair.sh"
+    [2]="02_assembly.sh"  # Will be updated based on assembly mode
     [3]="03_binning.sh"  # Will be updated based on binning mode
     [4]="04_bin_refinement.sh"
     [5]="05_bin_reassembly.sh"
     [6]="06_magpurify.sh"
     [7]="07_checkm2.sh"
-    [8]="07b_bin_selection.sh"
-    [9]="08b_bin_collection.sh"
+    [8]="08_bin_selection.sh"
+    [9]="09_bin_collection.sh"
 )
 
 # Optional stage scripts (only run if flags are set)
@@ -394,15 +394,15 @@ declare -A OPTIONAL_STAGE_NAMES=(
 
 declare -A OPTIONAL_STAGE_SCRIPTS=(
     [merge_lanes]="-01_merge_lanes.sh"
-    [plasmid_detection]="02_plasmid_detection.sh"
+    [plasmid_detection]="plasmid_detection.sh"
 )
 
 # Function to get the correct assembly script based on mode
 get_assembly_script() {
     if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
-        echo "01b_coassembly.sh"
+        echo "02_coassembly.sh"
     else
-        echo "01_assembly.sh"
+        echo "02_assembly.sh"
     fi
 }
 
