@@ -31,6 +31,13 @@ export TRIMMOMATIC_MINLEN="${TRIMMOMATIC_MINLEN:-36}"
 # Assembly mode: "individual" or "coassembly"
 export ASSEMBLY_MODE="${ASSEMBLY_MODE:-individual}"
 
+# Assembly parameters
+export ASSEMBLY_THREADS="${ASSEMBLY_THREADS:-${SLURM_CPUS_PER_TASK:-32}}"
+export ASSEMBLY_MEMORY="${ASSEMBLY_MEMORY:-250}"  # Memory in GB for individual assembly
+export COASSEMBLY_MEMORY="${COASSEMBLY_MEMORY:-500}"  # Memory in GB for coassembly
+export BIN_REASSEMBLY_THREADS="${BIN_REASSEMBLY_THREADS:-8}"  # Threads for bin reassembly
+export BIN_REASSEMBLY_MEMORY="${BIN_REASSEMBLY_MEMORY:-32}"  # Memory in GB for bin reassembly
+
 # Pipeline parameters
 export MIN_COMPLETENESS="${MIN_COMPLETENESS:-90}"
 export MAX_CONTAMINATION="${MAX_CONTAMINATION:-5}"

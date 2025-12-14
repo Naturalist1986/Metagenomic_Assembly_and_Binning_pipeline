@@ -174,8 +174,8 @@ reassemble_bin_spades() {
     fi
     
     spades_cmd+=" -o $bin_output"
-    spades_cmd+=" -t 8"  # Use fewer threads per bin
-    spades_cmd+=" -m 32"  # Use less memory per bin
+    spades_cmd+=" -t $BIN_REASSEMBLY_THREADS"
+    spades_cmd+=" -m $BIN_REASSEMBLY_MEMORY"
     spades_cmd+=" --tmp-dir ${TEMP_DIR}/spades_${bin_name}"
     
     # Create temp directory

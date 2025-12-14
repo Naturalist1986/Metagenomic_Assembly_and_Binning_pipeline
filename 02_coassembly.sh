@@ -232,8 +232,8 @@ stage_coassembly() {
     fi
     
     spades_cmd+=" -o $coassembly_dir"
-    spades_cmd+=" -t $SLURM_CPUS_PER_TASK"
-    spades_cmd+=" -m 500"
+    spades_cmd+=" -t $ASSEMBLY_THREADS"
+    spades_cmd+=" -m $COASSEMBLY_MEMORY"
     spades_cmd+=" --tmp-dir ${TEMP_DIR}/spades_${treatment}"
     spades_cmd+=" --only-assembler"
     
