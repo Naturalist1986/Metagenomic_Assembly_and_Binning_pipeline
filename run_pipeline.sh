@@ -37,6 +37,11 @@ OPTIONS:
     -A, --account NAME            SLURM account name for job submission
     --merge-lanes                 Include lane/run merging stage (optional, off by default)
     --plasmid-detection           Include plasmid detection stage (optional, off by default)
+    --assembly-threads NUM        Number of threads for assembly [default: SLURM_CPUS_PER_TASK or 32]
+    --assembly-memory NUM         Memory in GB for individual assembly [default: 250]
+    --coassembly-memory NUM       Memory in GB for coassembly [default: 500]
+    --bin-reassembly-threads NUM  Threads for bin reassembly [default: 8]
+    --bin-reassembly-memory NUM   Memory in GB for bin reassembly [default: 32]
     -c, --create-template         Create sample sheet template and exit
     -d, --dry-run                 Show what would be run without executing
     -h, --help                    Show this help message
@@ -123,6 +128,14 @@ EXAMPLES:
     # Dry run to preview execution
     $0 --dry-run -i /path/to/fastq -o /path/to/output
 
+    # Custom assembly resources (16 threads, 128GB memory)
+    $0 --assembly-threads 16 --assembly-memory 128 \\
+       -i /path/to/fastq -o /path/to/output
+
+    # Custom coassembly with different memory allocation
+    $0 --assembly-mode coassembly --coassembly-memory 400 \\
+       -i /path/to/fastq -o /path/to/output
+
     # Create sample sheet template
     $0 --create-template -i /path/to/fastq
 
@@ -144,6 +157,11 @@ INPUT_DIR_ARG=""
 OUTPUT_DIR_ARG=""
 SAMPLE_SHEET_ARG=""
 SLURM_ACCOUNT_ARG=""
+ASSEMBLY_THREADS_ARG=""
+ASSEMBLY_MEMORY_ARG=""
+COASSEMBLY_MEMORY_ARG=""
+BIN_REASSEMBLY_THREADS_ARG=""
+BIN_REASSEMBLY_MEMORY_ARG=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -199,6 +217,26 @@ while [[ $# -gt 0 ]]; do
             SKIP_PLASMID_DETECTION=false
             shift
             ;;
+        --assembly-threads)
+            ASSEMBLY_THREADS_ARG="$2"
+            shift 2
+            ;;
+        --assembly-memory)
+            ASSEMBLY_MEMORY_ARG="$2"
+            shift 2
+            ;;
+        --coassembly-memory)
+            COASSEMBLY_MEMORY_ARG="$2"
+            shift 2
+            ;;
+        --bin-reassembly-threads)
+            BIN_REASSEMBLY_THREADS_ARG="$2"
+            shift 2
+            ;;
+        --bin-reassembly-memory)
+            BIN_REASSEMBLY_MEMORY_ARG="$2"
+            shift 2
+            ;;
         -c|--create-template)
             CREATE_TEMPLATE=true
             shift
@@ -234,6 +272,27 @@ fi
 
 if [ -n "$SLURM_ACCOUNT_ARG" ]; then
     export SLURM_ACCOUNT="$SLURM_ACCOUNT_ARG"
+fi
+
+# Export assembly parameters if provided
+if [ -n "$ASSEMBLY_THREADS_ARG" ]; then
+    export ASSEMBLY_THREADS="$ASSEMBLY_THREADS_ARG"
+fi
+
+if [ -n "$ASSEMBLY_MEMORY_ARG" ]; then
+    export ASSEMBLY_MEMORY="$ASSEMBLY_MEMORY_ARG"
+fi
+
+if [ -n "$COASSEMBLY_MEMORY_ARG" ]; then
+    export COASSEMBLY_MEMORY="$COASSEMBLY_MEMORY_ARG"
+fi
+
+if [ -n "$BIN_REASSEMBLY_THREADS_ARG" ]; then
+    export BIN_REASSEMBLY_THREADS="$BIN_REASSEMBLY_THREADS_ARG"
+fi
+
+if [ -n "$BIN_REASSEMBLY_MEMORY_ARG" ]; then
+    export BIN_REASSEMBLY_MEMORY="$BIN_REASSEMBLY_MEMORY_ARG"
 fi
 
 export ASSEMBLY_MODE
@@ -839,6 +898,23 @@ submit_job() {
     cmd+=",TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE}"
     cmd+=",SLURM_ACCOUNT=${SLURM_ACCOUNT}"
+
+    # Export assembly parameters if set
+    if [ -n "$ASSEMBLY_THREADS" ]; then
+        cmd+=",ASSEMBLY_THREADS=${ASSEMBLY_THREADS}"
+    fi
+    if [ -n "$ASSEMBLY_MEMORY" ]; then
+        cmd+=",ASSEMBLY_MEMORY=${ASSEMBLY_MEMORY}"
+    fi
+    if [ -n "$COASSEMBLY_MEMORY" ]; then
+        cmd+=",COASSEMBLY_MEMORY=${COASSEMBLY_MEMORY}"
+    fi
+    if [ -n "$BIN_REASSEMBLY_THREADS" ]; then
+        cmd+=",BIN_REASSEMBLY_THREADS=${BIN_REASSEMBLY_THREADS}"
+    fi
+    if [ -n "$BIN_REASSEMBLY_MEMORY" ]; then
+        cmd+=",BIN_REASSEMBLY_MEMORY=${BIN_REASSEMBLY_MEMORY}"
+    fi
     
     # Add log file specifications
     local script_basename=$(basename -- "$script" .sh)
@@ -1006,6 +1082,23 @@ for opt_stage in "${OPTIONAL_STAGES_TO_RUN[@]}"; do
     cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
 
+    # Export assembly parameters if set
+    if [ -n "$ASSEMBLY_THREADS" ]; then
+        cmd+=",ASSEMBLY_THREADS=${ASSEMBLY_THREADS}"
+    fi
+    if [ -n "$ASSEMBLY_MEMORY" ]; then
+        cmd+=",ASSEMBLY_MEMORY=${ASSEMBLY_MEMORY}"
+    fi
+    if [ -n "$COASSEMBLY_MEMORY" ]; then
+        cmd+=",COASSEMBLY_MEMORY=${COASSEMBLY_MEMORY}"
+    fi
+    if [ -n "$BIN_REASSEMBLY_THREADS" ]; then
+        cmd+=",BIN_REASSEMBLY_THREADS=${BIN_REASSEMBLY_THREADS}"
+    fi
+    if [ -n "$BIN_REASSEMBLY_MEMORY" ]; then
+        cmd+=",BIN_REASSEMBLY_MEMORY=${BIN_REASSEMBLY_MEMORY}"
+    fi
+
     if [ -n "$previous_job_id" ]; then
         cmd+=" --dependency=afterok:${previous_job_id}"
     fi
@@ -1083,6 +1176,23 @@ for stage in "${STAGES_TO_RUN[@]}"; do
             cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
             cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},TREATMENTS_FILE=${TREATMENTS_FILE}"
             cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
+
+            # Export assembly parameters if set
+            if [ -n "$ASSEMBLY_THREADS" ]; then
+                cmd+=",ASSEMBLY_THREADS=${ASSEMBLY_THREADS}"
+            fi
+            if [ -n "$ASSEMBLY_MEMORY" ]; then
+                cmd+=",ASSEMBLY_MEMORY=${ASSEMBLY_MEMORY}"
+            fi
+            if [ -n "$COASSEMBLY_MEMORY" ]; then
+                cmd+=",COASSEMBLY_MEMORY=${COASSEMBLY_MEMORY}"
+            fi
+            if [ -n "$BIN_REASSEMBLY_THREADS" ]; then
+                cmd+=",BIN_REASSEMBLY_THREADS=${BIN_REASSEMBLY_THREADS}"
+            fi
+            if [ -n "$BIN_REASSEMBLY_MEMORY" ]; then
+                cmd+=",BIN_REASSEMBLY_MEMORY=${BIN_REASSEMBLY_MEMORY}"
+            fi
 
             if [ -n "$previous_job_id" ]; then
                 cmd+=" --dependency=afterok:${previous_job_id}"
