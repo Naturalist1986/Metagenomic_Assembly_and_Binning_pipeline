@@ -118,15 +118,39 @@ clean_bin_sequences() {
     return 0
 }
 
+# Function to check if a bin has already been successfully purified
+is_bin_already_purified() {
+    local output_bin="$1"
+
+    # Check if output bin exists
+    if [ ! -f "$output_bin" ]; then
+        return 1
+    fi
+
+    # Check if output bin is not empty
+    if [ ! -s "$output_bin" ]; then
+        return 1
+    fi
+
+    # Check if output bin has valid contigs
+    local contig_count=$(grep -c "^>" "$output_bin" 2>/dev/null || echo 0)
+    if [ $contig_count -eq 0 ]; then
+        return 1
+    fi
+
+    # Bin is valid and already purified
+    return 0
+}
+
 # Function to run MAGpurify modules on a single bin
 run_magpurify_on_bin() {
     local input_bin="$1"
     local work_dir="$2"
     local bin_name="$3"
     local output_bin="$4"
-    
+
     log "  Running MAGpurify on $bin_name..."
-    
+
     # Create bin-specific work directory
     local bin_work_dir="${work_dir}/${bin_name}"
     mkdir -p "$bin_work_dir"
@@ -278,11 +302,8 @@ stage_magpurify() {
 
     mkdir -p "${output_dir}/purified_bins"
 
-    # Check if already processed
-    if [ -f "${output_dir}/magpurify_complete.flag" ]; then
-        log "MAGpurify already processed for $entity_desc, skipping..."
-        return 0
-    fi
+    # Note: Removed completion flag check to allow resuming partial processing
+    # Individual bins will be checked instead
 
     # Find reassembled bins - handles both treatment and sample level
     if [ -n "$sample_name" ]; then
@@ -326,19 +347,36 @@ stage_magpurify() {
     local processed_count=0
     local cleaned_count=0
     local failed_count=0
+    local skipped_count=0
     local total_contigs_before=0
     local total_contigs_after=0
-    
+
     for bin_file in "${bins[@]}"; do
         local bin_name=$(basename "$bin_file" .fa)
         local output_bin="${output_dir}/purified_bins/${bin_name}.fa"
-        
+
+        # Check if bin has already been successfully purified
+        if is_bin_already_purified "$output_bin"; then
+            log "Bin $bin_name already purified, skipping..."
+            ((skipped_count++))
+
+            # Count contigs from existing output
+            local existing_contigs=$(grep -c "^>" "$output_bin" 2>/dev/null || echo 0)
+            total_contigs_after=$((total_contigs_after + existing_contigs))
+
+            # Estimate input contigs for statistics
+            local before_contigs=$(grep -c "^>" "$bin_file" 2>/dev/null || echo 0)
+            total_contigs_before=$((total_contigs_before + before_contigs))
+
+            continue
+        fi
+
         log "Processing bin: $bin_name"
-        
+
         # Count input contigs
         local before_contigs=$(grep -c "^>" "$bin_file" 2>/dev/null || echo 0)
         total_contigs_before=$((total_contigs_before + before_contigs))
-        
+
         # Run MAGpurify on this bin
         if run_magpurify_on_bin "$bin_file" "$mag_temp" "$bin_name" "$output_bin"; then
             ((processed_count++))
@@ -372,13 +410,23 @@ stage_magpurify() {
     conda deactivate
 
     log "MAGpurify completed for $entity_desc:"
-    log "  Processed: $processed_count/$bin_count bins"
+    log "  Processed: $processed_count bins"
+    log "  Skipped (already purified): $skipped_count bins"
     log "  Cleaned: $cleaned_count bins"
     log "  Failed: $failed_count bins"
+    log "  Total bins: $((processed_count + skipped_count))/$bin_count"
     log "  Total contigs: $total_contigs_before → $total_contigs_after"
 
-    # Create completion flag
-    touch "${output_dir}/magpurify_complete.flag"
+    # Create completion flag only if all bins have been processed or skipped
+    local expected_bins=$bin_count
+    local actual_bins=$((processed_count + skipped_count + failed_count))
+
+    if [ $actual_bins -eq $expected_bins ]; then
+        touch "${output_dir}/magpurify_complete.flag"
+        log "All bins completed - created completion flag"
+    else
+        log "WARNING: Not all bins processed ($actual_bins/$expected_bins) - completion flag not created"
+    fi
 
     # Generate statistics
     if [ -n "$sample_name" ]; then
@@ -386,8 +434,9 @@ stage_magpurify() {
     else
         generate_treatment_stats "$treatment" "$input_bins_dir" "${output_dir}/purified_bins"
     fi
-    
-    if [ $processed_count -gt 0 ]; then
+
+    # Return success if we have any successful bins (processed or skipped)
+    if [ $((processed_count + skipped_count)) -gt 0 ]; then
         return 0
     else
         return 1
