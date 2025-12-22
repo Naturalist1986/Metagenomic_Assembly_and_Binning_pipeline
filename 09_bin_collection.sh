@@ -99,6 +99,132 @@ collect_selected_bins() {
     return 0
 }
 
+# Function to run CoverM for each sample
+run_coverm_for_samples() {
+    local treatment="$1"
+    local samples_str="$2"
+    local bins_dir="$3"
+
+    log "Running CoverM abundance calculation for treatment $treatment..."
+
+    # Convert samples string to array
+    local samples=($samples_str)
+
+    # Validate bins directory
+    if [ ! -d "$bins_dir" ]; then
+        log "ERROR: Bins directory not found: $bins_dir"
+        return 1
+    fi
+
+    local bin_count=$(ls -1 "$bins_dir"/*.fa 2>/dev/null | wc -l)
+    if [ $bin_count -eq 0 ]; then
+        log "ERROR: No bins found in $bins_dir"
+        return 1
+    fi
+
+    log "  Using $bin_count bins from: $bins_dir"
+
+    # Activate CoverM environment (usually in checkm environment)
+    activate_env checkm
+
+    # Check if CoverM is available
+    if ! command -v coverm &> /dev/null; then
+        log "ERROR: CoverM not available in environment"
+        conda deactivate
+        return 1
+    fi
+
+    # Process each sample
+    local successful=0
+    local failed=0
+
+    for sample in "${samples[@]}"; do
+        log "  Processing sample: $sample"
+
+        # Output directory for this sample
+        local sample_output_dir="${OUTPUT_DIR}/coverm/${treatment}/${sample}"
+        mkdir -p "$sample_output_dir"
+
+        # Check if already completed
+        if [ -f "${sample_output_dir}/abundance.tsv" ] && [ -s "${sample_output_dir}/abundance.tsv" ]; then
+            log "    CoverM already completed for $sample, skipping..."
+            ((successful++))
+            continue
+        fi
+
+        # Find quality-filtered reads for this sample
+        local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample}"
+        local read1="${quality_dir}/filtered_1.fastq.gz"
+        local read2="${quality_dir}/filtered_2.fastq.gz"
+
+        if [ ! -f "$read1" ] || [ ! -f "$read2" ]; then
+            log "    ERROR: Quality-filtered reads not found for $sample"
+            log "      Expected: $read1 and $read2"
+            ((failed++))
+            continue
+        fi
+
+        # Get list of valid bin files
+        local bin_files=()
+        for bin_file in "$bins_dir"/*.fa; do
+            if [ -f "$bin_file" ]; then
+                bin_files+=("$bin_file")
+            fi
+        done
+
+        if [ ${#bin_files[@]} -eq 0 ]; then
+            log "    ERROR: No valid bin files found"
+            ((failed++))
+            continue
+        fi
+
+        # Create mapping directory
+        local mapping_dir="${sample_output_dir}/mapping"
+        mkdir -p "$mapping_dir"
+
+        log "    Running CoverM genome mode for ${#bin_files[@]} bins..."
+
+        # Run CoverM genome mode
+        coverm genome \
+            --genome-fasta-files "${bin_files[@]}" \
+            --coupled "$read1" "$read2" \
+            --output-file "${sample_output_dir}/abundance.tsv" \
+            --output-format dense \
+            --min-read-aligned-percent 0.75 \
+            --min-read-percent-identity 0.95 \
+            --min-covered-fraction 0 \
+            --contig-end-exclusion 75 \
+            --trim-min 0.05 \
+            --trim-max 0.95 \
+            --proper-pairs-only \
+            --methods relative_abundance mean trimmed_mean covered_fraction reads_per_base rpkm tpm \
+            --threads $SLURM_CPUS_PER_TASK \
+            --bam-file-cache-directory "$mapping_dir" \
+            2>&1 | tee "${LOG_DIR}/${treatment}/${sample}_coverm.log"
+
+        local exit_code=${PIPESTATUS[0]}
+
+        if [ $exit_code -eq 0 ] && [ -f "${sample_output_dir}/abundance.tsv" ]; then
+            log "    CoverM completed successfully for $sample"
+            ((successful++))
+        else
+            log "    ERROR: CoverM failed for $sample (exit code: $exit_code)"
+            ((failed++))
+        fi
+    done
+
+    conda deactivate
+
+    log "CoverM processing complete: $successful successful, $failed failed"
+
+    if [ $successful -eq 0 ]; then
+        log "ERROR: No samples were successfully processed by CoverM"
+        return 1
+    fi
+
+    return 0
+}
+
 # Function to consolidate CoverM abundance files
 consolidate_coverm_abundance() {
     local treatment="$1"
@@ -459,19 +585,25 @@ stage_bin_collection() {
     local sample_count=$(echo "$samples" | wc -w)
     log "  Found $sample_count samples: $samples"
 
-    # Step 3: Consolidate CoverM abundance data
+    # Step 3: Run CoverM for each sample using the collected bins
+    if ! run_coverm_for_samples "$treatment" "$samples" "$collected_bins_dir"; then
+        log "ERROR: Failed to run CoverM for samples"
+        return 1
+    fi
+
+    # Step 4: Consolidate CoverM abundance data
     if ! consolidate_coverm_abundance "$treatment" "$samples" "$OUTPUT_DIR"; then
         log "ERROR: Failed to consolidate CoverM abundance data"
         return 1
     fi
 
-    # Step 4: Run GTDB-Tk on selected bins
+    # Step 5: Run GTDB-Tk on selected bins
     if ! run_gtdbtk "$treatment" "$collected_bins_dir" "$OUTPUT_COLLECTION_DIR"; then
         log "ERROR: Failed to run GTDB-Tk"
         return 1
     fi
 
-    # Step 5: Create summary report
+    # Step 6: Create summary report
     create_summary_report "$treatment" "$OUTPUT_COLLECTION_DIR" "$bin_count" "$sample_count"
 
     log "Bin collection completed for treatment $treatment"
