@@ -1,5 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=assembly_success
+#SBATCH --array=0-99%10
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
@@ -8,6 +9,10 @@
 
 # calculate_assembly_success_rates.sh - Standalone script to calculate assembly success rates
 # for already-completed assemblies (both individual and coassembly)
+#
+# Can run in two modes:
+# 1. Array job mode (recommended for many treatments): Each array task processes one treatment
+# 2. Sequential mode: Process all treatments in one job
 
 # Usage:
 #   ./calculate_assembly_success_rates.sh [OPTIONS]
@@ -109,8 +114,55 @@ log "====== Starting Assembly Success Rate Calculation ======"
 log "Mode: $MODE"
 log "Output summary: $OUTPUT_SUMMARY"
 
-# Create summary file header
-echo -e "Type\tTreatment\tSample\tTotal_Reads\tAssembly_Success_Rate(%)\tContigs_File\tStatus" > "$OUTPUT_SUMMARY"
+# Detect if running as array job
+if [ -n "$SLURM_ARRAY_TASK_ID" ]; then
+    ARRAY_MODE=true
+    ARRAY_INDEX=$SLURM_ARRAY_TASK_ID
+    log "Running in ARRAY mode (task $ARRAY_INDEX)"
+else
+    ARRAY_MODE=false
+    log "Running in SEQUENTIAL mode"
+fi
+
+# Create summary file header (append mode for array jobs)
+if [ "$ARRAY_MODE" = false ] || [ "$ARRAY_INDEX" -eq 0 ]; then
+    echo -e "Type\tTreatment\tSample\tTotal_Reads\tAssembly_Success_Rate(%)\tContigs_File\tStatus" > "$OUTPUT_SUMMARY"
+fi
+
+# Function to get all unique treatments
+get_all_treatments() {
+    local treatments=()
+
+    # Get treatments from assembly directory
+    if [ "$MODE" = "individual" ] || [ "$MODE" = "both" ]; then
+        if [ -d "${OUTPUT_DIR}/assembly" ]; then
+            for treatment_dir in "${OUTPUT_DIR}/assembly"/*; do
+                if [ -d "$treatment_dir" ]; then
+                    local treatment=$(basename "$treatment_dir")
+                    treatments+=("$treatment")
+                fi
+            done
+        fi
+    fi
+
+    # Get treatments from coassembly directory
+    if [ "$MODE" = "coassembly" ] || [ "$MODE" = "both" ]; then
+        if [ -d "${OUTPUT_DIR}/coassembly" ]; then
+            for treatment_dir in "${OUTPUT_DIR}/coassembly"/*; do
+                if [ -d "$treatment_dir" ]; then
+                    local treatment=$(basename "$treatment_dir")
+                    # Add only if not already in array
+                    if [[ ! " ${treatments[@]} " =~ " ${treatment} " ]]; then
+                        treatments+=("$treatment")
+                    fi
+                fi
+            done
+        fi
+    fi
+
+    # Return unique treatments
+    printf '%s\n' "${treatments[@]}" | sort -u
+}
 
 # Function to calculate success rate for individual assembly
 calculate_individual_assembly_rate() {
@@ -295,6 +347,31 @@ calculate_coassembly_rate() {
     fi
 }
 
+# Determine which treatments to process
+if [ "$ARRAY_MODE" = true ]; then
+    # Array mode: Get treatment for this array index
+    mapfile -t ALL_TREATMENTS < <(get_all_treatments)
+
+    if [ "$ARRAY_INDEX" -ge "${#ALL_TREATMENTS[@]}" ]; then
+        log "No treatment for array index $ARRAY_INDEX (only ${#ALL_TREATMENTS[@]} treatments found)"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 0
+    fi
+
+    CURRENT_TREATMENT="${ALL_TREATMENTS[$ARRAY_INDEX]}"
+    log "Processing treatment: $CURRENT_TREATMENT (array task $ARRAY_INDEX)"
+    TREATMENTS_TO_PROCESS=("$CURRENT_TREATMENT")
+else
+    # Sequential mode: Process all treatments (or specific treatment if requested)
+    if [ -n "$TREATMENT_NAME" ]; then
+        TREATMENTS_TO_PROCESS=("$TREATMENT_NAME")
+        log "Processing specific treatment: $TREATMENT_NAME"
+    else
+        mapfile -t TREATMENTS_TO_PROCESS < <(get_all_treatments)
+        log "Processing all treatments: ${TREATMENTS_TO_PROCESS[*]}"
+    fi
+fi
+
 # Process individual assemblies
 if [ "$MODE" = "individual" ] || [ "$MODE" = "both" ]; then
     log "====== Processing Individual Assemblies ======"
@@ -303,19 +380,17 @@ if [ "$MODE" = "individual" ] || [ "$MODE" = "both" ]; then
         # Process specific sample
         calculate_individual_assembly_rate "$SAMPLE_NAME" "$TREATMENT_NAME"
     else
-        # Process all samples
+        # Process samples for selected treatments
         if [ -d "${OUTPUT_DIR}/assembly" ]; then
-            for treatment_dir in "${OUTPUT_DIR}/assembly"/*; do
+            for treatment in "${TREATMENTS_TO_PROCESS[@]}"; do
+                treatment_dir="${OUTPUT_DIR}/assembly/${treatment}"
+
                 if [ ! -d "$treatment_dir" ]; then
+                    log "  No individual assemblies found for treatment: $treatment"
                     continue
                 fi
 
-                treatment=$(basename "$treatment_dir")
-
-                # Skip if specific treatment requested and this isn't it
-                if [ -n "$TREATMENT_NAME" ] && [ "$treatment" != "$TREATMENT_NAME" ]; then
-                    continue
-                fi
+                log "  Processing individual assemblies for treatment: $treatment"
 
                 for sample_dir in "$treatment_dir"/*; do
                     if [ ! -d "$sample_dir" ]; then
@@ -336,23 +411,25 @@ fi
 if [ "$MODE" = "coassembly" ] || [ "$MODE" = "both" ]; then
     log "====== Processing Coassemblies ======"
 
-    if [ -n "$TREATMENT_NAME" ]; then
-        # Process specific treatment
-        calculate_coassembly_rate "$TREATMENT_NAME"
-    else
-        # Process all treatments
-        if [ -d "${OUTPUT_DIR}/coassembly" ]; then
-            for treatment_dir in "${OUTPUT_DIR}/coassembly"/*; do
-                if [ ! -d "$treatment_dir" ]; then
-                    continue
-                fi
+    if [ -n "$SAMPLE_NAME" ]; then
+        log "WARNING: --sample option ignored for coassembly mode"
+    fi
 
-                treatment=$(basename "$treatment_dir")
-                calculate_coassembly_rate "$treatment"
-            done
-        else
-            log "WARNING: No coassemblies found at ${OUTPUT_DIR}/coassembly"
-        fi
+    # Process coassemblies for selected treatments
+    if [ -d "${OUTPUT_DIR}/coassembly" ]; then
+        for treatment in "${TREATMENTS_TO_PROCESS[@]}"; do
+            coassembly_dir="${OUTPUT_DIR}/coassembly/${treatment}"
+
+            if [ ! -d "$coassembly_dir" ]; then
+                log "  No coassembly found for treatment: $treatment"
+                continue
+            fi
+
+            log "  Processing coassembly for treatment: $treatment"
+            calculate_coassembly_rate "$treatment"
+        done
+    else
+        log "WARNING: No coassemblies found at ${OUTPUT_DIR}/coassembly"
     fi
 fi
 

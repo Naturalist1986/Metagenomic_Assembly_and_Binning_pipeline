@@ -61,24 +61,75 @@ OUTPUT_DIR=/path/to/output PIPELINE_DIR=/path/to/scripts ./calculate_assembly_su
 
 ### Submit as SLURM Job
 
+The script supports two execution modes when submitted via SLURM:
+
+#### **Array Job Mode (Recommended - Parallel Processing)**
+
+Each treatment runs as a separate job for maximum parallelism:
+
 ```bash
 # Set environment variables first
 export OUTPUT_DIR=/path/to/your/output/directory
 export PIPELINE_DIR=/path/to/Metagenomic_Assembly_and_Binning_pipeline
 
-# For all assemblies
+# Submit array job (processes each treatment in parallel)
 sbatch calculate_assembly_success_rates.sh
 
-# For specific mode or treatment
-sbatch --export=ALL calculate_assembly_success_rates.sh --mode individual --treatment treatment1
+# The script automatically uses array job mode and will:
+# - Detect all treatments
+# - Launch one job per treatment
+# - Process them in parallel (up to 10 simultaneous jobs by default)
 ```
 
-Or set variables inline when submitting:
+#### **Sequential Mode (Single Job)**
+
+Process all treatments sequentially in one job:
 
 ```bash
-# Set variables inline for SLURM
-sbatch --export=OUTPUT_DIR=/path/to/output,PIPELINE_DIR=/path/to/scripts calculate_assembly_success_rates.sh
+# Disable array job by removing array directive
+sbatch --array= calculate_assembly_success_rates.sh
+
+# Or run directly (not as batch job)
+./calculate_assembly_success_rates.sh
 ```
+
+#### **For Specific Mode or Treatment**
+
+```bash
+# Array job for specific mode
+sbatch --export=ALL calculate_assembly_success_rates.sh --mode individual
+
+# Sequential for specific treatment
+sbatch --array= --export=ALL calculate_assembly_success_rates.sh --treatment treatment1
+```
+
+#### **Setting Variables Inline**
+
+```bash
+# Array job mode with inline variables
+sbatch --export=OUTPUT_DIR=/path/to/output,PIPELINE_DIR=/path/to/scripts calculate_assembly_success_rates.sh
+
+# Sequential mode with inline variables
+sbatch --array= --export=OUTPUT_DIR=/path/to/output,PIPELINE_DIR=/path/to/scripts calculate_assembly_success_rates.sh
+```
+
+### Why Use Array Job Mode?
+
+**Benefits:**
+- **Much faster**: All treatments processed in parallel instead of sequentially
+- **Better resource utilization**: Each treatment gets dedicated CPUs and memory
+- **Fault tolerant**: If one treatment fails, others continue
+- **Easy monitoring**: Use `squeue` to see progress of each treatment
+
+**When to use:**
+- You have multiple treatments (recommended for 2+ treatments)
+- You want results quickly
+- Your cluster allows array jobs
+
+**When to use sequential mode:**
+- You have only one treatment
+- Your cluster restricts array jobs
+- You prefer simpler job management
 
 ### Command-Line Options
 
@@ -89,6 +140,8 @@ sbatch --export=OUTPUT_DIR=/path/to/output,PIPELINE_DIR=/path/to/scripts calcula
 | `-t, --treatment NAME` | Process specific treatment | All treatments |
 | `-o, --output FILE` | Output summary report filename | `assembly_success_rates_summary.tsv` |
 | `-h, --help` | Show help message | - |
+
+**Note:** In array job mode, the `--treatment` option is ignored since each array task processes one treatment automatically.
 
 ## Output Files
 
