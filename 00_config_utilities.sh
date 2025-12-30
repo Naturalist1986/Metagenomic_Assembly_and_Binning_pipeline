@@ -1009,6 +1009,124 @@ validate_assembly() {
     return 1
 }
 
+###############################################################################
+# ASSEMBLY QUALITY FUNCTIONS
+###############################################################################
+
+# Calculate assembly success rate (percentage of reads assembled)
+calculate_assembly_success_rate() {
+    local contigs_file="$1"
+    local r1_file="$2"
+    local r2_file="$3"
+    local sample_name="${4:-unknown}"
+    local output_prefix="${5:-${TEMP_DIR}/assembly_mapping}"
+    local threads="${SLURM_CPUS_PER_TASK:-8}"
+
+    log "Calculating assembly success rate for $sample_name..."
+
+    # Validate inputs
+    if [ ! -f "$contigs_file" ] || [ ! -s "$contigs_file" ]; then
+        log "ERROR: Contigs file not found or empty: $contigs_file"
+        echo "0.00"
+        return 1
+    fi
+
+    if [ ! -f "$r1_file" ] || [ ! -f "$r2_file" ]; then
+        log "ERROR: Input read files not found"
+        echo "0.00"
+        return 1
+    fi
+
+    # Count total input reads
+    local total_reads=$(count_reads "$r1_file")
+    log "  Total input reads: $total_reads"
+
+    if [ "$total_reads" -eq 0 ]; then
+        log "ERROR: No reads found in input files"
+        echo "0.00"
+        return 1
+    fi
+
+    # Activate BBMap environment
+    activate_env bbmap
+
+    # Create output directory
+    mkdir -p "$(dirname "$output_prefix")"
+
+    # Map reads back to contigs using BBMap
+    local stats_file="${output_prefix}_stats.txt"
+
+    log "  Mapping reads back to contigs..."
+    bbmap.sh \
+        in="$r1_file" \
+        in2="$r2_file" \
+        ref="$contigs_file" \
+        nodisk \
+        threads="$threads" \
+        statsfile="$stats_file" \
+        scafstats="${output_prefix}_scafstats.txt" \
+        covstats="${output_prefix}_covstats.txt" \
+        rpkm="${output_prefix}_rpkm.txt" \
+        sortscafs=f \
+        nzo=f \
+        slow=f \
+        fast=t \
+        maxindel=100 \
+        ambiguous=random \
+        2>&1 | grep -E "(mapped:|Reads Used:)" | tee -a "${LOG_DIR}/${TREATMENT:-unknown}/${sample_name}_assembly_mapping.log" >&2
+
+    local exit_code=${PIPESTATUS[0]}
+
+    if [ $exit_code -ne 0 ]; then
+        log "ERROR: BBMap failed with exit code $exit_code"
+        conda deactivate
+        echo "0.00"
+        return 1
+    fi
+
+    # Parse mapping statistics
+    local mapped_reads=0
+    local percent_mapped=0.00
+
+    # Extract mapped read count from stats file
+    if [ -f "$stats_file" ]; then
+        # BBMap reports "mapped:" with the percentage
+        # We need to calculate from the percentage and total reads
+        percent_mapped=$(grep "mapped:" "$stats_file" | awk '{print $2}' | sed 's/%//' || echo "0.00")
+
+        if [ -z "$percent_mapped" ] || [ "$percent_mapped" = "0.00" ]; then
+            # Try alternative parsing
+            percent_mapped=$(grep -i "percent mapped" "$stats_file" | awk '{print $NF}' | sed 's/%//' || echo "0.00")
+        fi
+
+        # Calculate mapped reads from percentage
+        mapped_reads=$(awk -v total="$total_reads" -v percent="$percent_mapped" 'BEGIN {printf "%.0f", total * percent / 100}')
+
+        log "  Mapped reads: $mapped_reads ($percent_mapped%)"
+        log "  Assembly success rate: ${percent_mapped}%"
+    else
+        log "WARNING: Stats file not found, cannot calculate mapping rate"
+        percent_mapped="0.00"
+    fi
+
+    conda deactivate
+
+    # Return the percentage
+    echo "$percent_mapped"
+    return 0
+}
+
+# Calculate assembly success rate for coassembly (with merged reads)
+calculate_coassembly_success_rate() {
+    local contigs_file="$1"
+    local merged_r1="$2"
+    local merged_r2="$3"
+    local treatment="${4:-unknown}"
+    local output_prefix="${5:-${TEMP_DIR}/coassembly_mapping}"
+
+    calculate_assembly_success_rate "$contigs_file" "$merged_r1" "$merged_r2" "$treatment" "$output_prefix"
+}
+
 # Export all functions
 export -f log check_sample_checkpoint create_sample_checkpoint check_treatment_checkpoint create_treatment_checkpoint
 export -f check_checkpoint create_checkpoint activate_env create_sample_dirs create_treatment_dirs
@@ -1018,3 +1136,4 @@ export -f auto_discover_samples get_total_samples init_sample_info create_sample
 export -f validate_quality_filtering validate_assembly init_sample_storage add_sample_info
 export -f detect_sample_lanes sample_has_multiple_lanes count_sample_lanes
 export -f count_reads validate_read_counts repair_paired_reads
+export -f calculate_assembly_success_rate calculate_coassembly_success_rate

@@ -291,43 +291,63 @@ log_coassembly_stats() {
     local treatment="$1"
     local assembly_dir="$2"
     local contigs_file="${assembly_dir}/contigs.fasta"
-    
+
     if [ ! -f "$contigs_file" ]; then
         return 1
     fi
-    
+
     log "Co-assembly statistics for treatment: $treatment"
-    
+
     # Basic statistics
     local num_contigs=$(grep -c '^>' "$contigs_file")
     local total_length=$(grep -v '^>' "$contigs_file" | tr -d '\n' | wc -c)
-    
+
     log "  Total contigs: $num_contigs"
     log "  Total length: $total_length bp"
-    
+
     # Extract contig lengths
     local lengths_file="${TEMP_DIR}/contig_lengths.txt"
     grep '^>' "$contigs_file" | sed 's/.*length_\([0-9]*\).*/\1/' > "$lengths_file"
-    
+
     if [ -s "$lengths_file" ]; then
         local max_length=$(sort -nr "$lengths_file" | head -1)
         local min_length=$(sort -n "$lengths_file" | head -1)
-        
+
         log "  Maximum contig length: $max_length bp"
         log "  Minimum contig length: $min_length bp"
-        
+
         # Calculate N50
         local n50=$(calculate_n50 "$lengths_file")
         log "  N50: $n50 bp"
-        
+
         # Length distribution
         local long_contigs=$(awk '$1 >= 1000' "$lengths_file" | wc -l)
         local very_long_contigs=$(awk '$1 >= 10000' "$lengths_file" | wc -l)
-        
+
         log "  Contigs ≥ 1kb: $long_contigs"
         log "  Contigs ≥ 10kb: $very_long_contigs"
     fi
-    
+
+    # Calculate assembly success rate using merged reads
+    log "  Calculating assembly success rate..."
+    local merged_reads_dir="${assembly_dir}/merged_reads"
+
+    if [ -f "${merged_reads_dir}/merged_R1.fastq.gz" ] && [ -f "${merged_reads_dir}/merged_R2.fastq.gz" ]; then
+        local assembly_success_rate=$(calculate_coassembly_success_rate \
+            "$contigs_file" \
+            "${merged_reads_dir}/merged_R1.fastq.gz" \
+            "${merged_reads_dir}/merged_R2.fastq.gz" \
+            "$treatment" \
+            "${assembly_dir}/coassembly_mapping")
+
+        log "  Assembly success rate: ${assembly_success_rate}%"
+
+        # Save success rate to file for later reference
+        echo "$assembly_success_rate" > "${assembly_dir}/assembly_success_rate.txt"
+    else
+        log "  WARNING: Merged reads not found, cannot calculate assembly success rate"
+    fi
+
     rm -f "$lengths_file"
 }
 

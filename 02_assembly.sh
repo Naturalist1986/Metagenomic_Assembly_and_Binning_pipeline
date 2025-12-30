@@ -172,49 +172,81 @@ log_assembly_stats() {
     local sample_name="$1"
     local assembly_dir="$2"
     local contigs_file="${assembly_dir}/contigs.fasta"
-    
+
     if [ ! -f "$contigs_file" ]; then
         return 1
     fi
-    
+
     log "Assembly statistics for $sample_name:"
-    
+
     # Basic statistics
     local num_contigs=$(grep -c '^>' "$contigs_file")
     local total_length=$(grep -v '^>' "$contigs_file" | tr -d '\n' | wc -c)
-    
+
     log "  Total contigs: $num_contigs"
     log "  Total length: $total_length bp"
-    
+
     # Extract contig lengths from headers (SPAdes format)
     local lengths_file="${TEMP_DIR}/contig_lengths.txt"
     grep '^>' "$contigs_file" | sed 's/.*length_\([0-9]*\).*/\1/' > "$lengths_file"
-    
+
     if [ -s "$lengths_file" ]; then
         local max_length=$(sort -nr "$lengths_file" | head -1)
         local min_length=$(sort -n "$lengths_file" | head -1)
         local median_length=$(sort -n "$lengths_file" | awk '{a[NR]=$1} END {print (NR%2==1)?a[int(NR/2)+1]:(a[NR/2]+a[NR/2+1])/2}')
-        
+
         log "  Maximum contig length: $max_length bp"
         log "  Minimum contig length: $min_length bp"
         log "  Median contig length: $median_length bp"
-        
+
         # Calculate N50
         local n50=$(calculate_n50 "$lengths_file")
         log "  N50: $n50 bp"
-        
+
         # Length distribution
         local long_contigs=$(awk '$1 >= 1000' "$lengths_file" | wc -l)
         local very_long_contigs=$(awk '$1 >= 10000' "$lengths_file" | wc -l)
-        
+
         log "  Contigs ≥ 1kb: $long_contigs"
         log "  Contigs ≥ 10kb: $very_long_contigs"
     fi
-    
+
     # GC content
     local gc_content=$(calculate_gc_content "$contigs_file")
     log "  GC content: ${gc_content}%"
-    
+
+    # Calculate assembly success rate
+    log "  Calculating assembly success rate..."
+    local input_dir=""
+    local validated_dir="${OUTPUT_DIR}/validated/${TREATMENT}/${sample_name}"
+    local quality_dir="${OUTPUT_DIR}/quality_filtering/${TREATMENT}/${sample_name}"
+
+    # Get input files (same logic as in stage_assembly)
+    if [ -d "$validated_dir" ] && [ -f "${validated_dir}/validated_1.fastq.gz" ]; then
+        local input_r1="${validated_dir}/validated_1.fastq.gz"
+        local input_r2="${validated_dir}/validated_2.fastq.gz"
+    elif [ -d "$quality_dir" ] && [ -f "${quality_dir}/filtered_1.fastq.gz" ]; then
+        local input_r1="${quality_dir}/filtered_1.fastq.gz"
+        local input_r2="${quality_dir}/filtered_2.fastq.gz"
+    else
+        log "  WARNING: Could not find input files for assembly success rate calculation"
+        rm -f "$lengths_file"
+        return 0
+    fi
+
+    # Calculate success rate
+    local assembly_success_rate=$(calculate_assembly_success_rate \
+        "$contigs_file" \
+        "$input_r1" \
+        "$input_r2" \
+        "$sample_name" \
+        "${assembly_dir}/assembly_mapping")
+
+    log "  Assembly success rate: ${assembly_success_rate}%"
+
+    # Save success rate to file for later reference
+    echo "$assembly_success_rate" > "${assembly_dir}/assembly_success_rate.txt"
+
     rm -f "$lengths_file"
 }
 
@@ -316,9 +348,18 @@ generate_assembly_stats() {
     echo "" >> "$stats_file"
     echo "Composition:" >> "$stats_file"
     echo "  GC content: ${gc_content}%" >> "$stats_file"
-    
+
+    # Add assembly success rate if available
+    if [ -f "${assembly_dir}/assembly_success_rate.txt" ]; then
+        local success_rate=$(cat "${assembly_dir}/assembly_success_rate.txt")
+        echo "" >> "$stats_file"
+        echo "Assembly Quality:" >> "$stats_file"
+        echo "  Assembly success rate: ${success_rate}%" >> "$stats_file"
+        echo "  (Percentage of input reads that mapped to assembled contigs)" >> "$stats_file"
+    fi
+
     rm -f "$lengths_file"
-    
+
     log "Assembly statistics report created: $stats_file"
 }
 
