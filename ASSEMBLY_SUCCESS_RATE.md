@@ -65,20 +65,37 @@ The script supports two execution modes when submitted via SLURM:
 
 #### **Array Job Mode (Recommended - Parallel Processing)**
 
-Each treatment runs as a separate job for maximum parallelism:
+**Using the Helper Script (Easiest):**
+
+The helper script automatically counts your treatments and submits with the correct array size:
 
 ```bash
 # Set environment variables first
 export OUTPUT_DIR=/path/to/your/output/directory
 export PIPELINE_DIR=/path/to/Metagenomic_Assembly_and_Binning_pipeline
 
-# Submit array job (processes each treatment in parallel)
-sbatch calculate_assembly_success_rates.sh
+# Submit array job with automatic array sizing
+./submit_assembly_success_rates.sh
 
-# The script automatically uses array job mode and will:
-# - Detect all treatments
-# - Launch one job per treatment
-# - Process them in parallel (up to 10 simultaneous jobs by default)
+# For specific mode
+./submit_assembly_success_rates.sh --mode individual
+
+# Control max parallel jobs (default: 10)
+./submit_assembly_success_rates.sh --max-parallel 20
+```
+
+**Manual Submission (Advanced):**
+
+If you know your treatment count, you can submit directly:
+
+```bash
+# For 6 treatments (array indices 0-5), max 10 parallel
+sbatch --array=0-5%10 --export=OUTPUT_DIR,PIPELINE_DIR calculate_assembly_success_rates.sh
+
+# Or count treatments first
+TREATMENT_COUNT=$(find $OUTPUT_DIR/coassembly -mindepth 1 -maxdepth 1 -type d | wc -l)
+MAX_INDEX=$((TREATMENT_COUNT - 1))
+sbatch --array=0-${MAX_INDEX}%10 --export=OUTPUT_DIR,PIPELINE_DIR calculate_assembly_success_rates.sh
 ```
 
 #### **Sequential Mode (Single Job)**
@@ -142,6 +159,113 @@ sbatch --array= --export=OUTPUT_DIR=/path/to/output,PIPELINE_DIR=/path/to/script
 | `-h, --help` | Show help message | - |
 
 **Note:** In array job mode, the `--treatment` option is ignored since each array task processes one treatment automatically.
+
+## Monitoring Jobs and Finding Output
+
+### Monitoring Job Progress
+
+After submitting an array job, you can monitor its progress:
+
+```bash
+# Check job status (all array tasks)
+squeue -u $USER
+
+# Check specific job (shows all array tasks)
+squeue -j <JOB_ID>
+
+# Show array task details
+squeue -j <JOB_ID> -r
+
+# Watch job progress (updates every 2 seconds)
+watch -n 2 "squeue -j <JOB_ID> -r"
+```
+
+### Where to Find Output Files
+
+#### **SLURM Log Files**
+
+Each array task creates its own log file:
+
+```
+# In your current directory (where you submitted the job)
+slurm-<JOB_ID>_0.out   # Treatment 0
+slurm-<JOB_ID>_1.out   # Treatment 1
+slurm-<JOB_ID>_2.out   # Treatment 2
+...
+```
+
+**What's in the log files:**
+- Which treatment is being processed
+- Progress messages (mapping reads, calculating rates)
+- Any errors or warnings
+- Final success rate for that treatment
+
+**Example log file content:**
+```
+[2025-12-30 10:15:23] ====== Starting Assembly Success Rate Calculation ======
+[2025-12-30 10:15:23] Mode: both
+[2025-12-30 10:15:23] Running in ARRAY mode (task 0)
+[2025-12-30 10:15:23] Processing treatment: control (array task 0)
+[2025-12-30 10:15:24] ====== Processing Individual Assemblies ======
+[2025-12-30 10:15:24]   Processing individual assemblies for treatment: control
+[2025-12-30 10:15:25] Processing individual assembly: sample1 (control)
+[2025-12-30 10:15:26] Calculating assembly success rate for sample1...
+[2025-12-30 10:15:26]   Total input reads: 5000000
+[2025-12-30 10:15:26]   Mapping reads back to contigs...
+[2025-12-30 10:16:45]   Mapped reads: 4250000 (85.00%)
+[2025-12-30 10:16:45]   Assembly success rate: 85.00%
+```
+
+#### **Summary Report**
+
+The TSV summary file combines results from all array tasks:
+
+```
+# Location (in your current directory)
+assembly_success_rates_summary.tsv
+```
+
+**Columns:**
+- Type: `individual` or `coassembly`
+- Treatment: Treatment name
+- Sample: Sample name (or `ALL` for coassembly)
+- Total_Reads: Number of input reads
+- Assembly_Success_Rate(%): Calculated percentage
+- Contigs_File: Path to assembly
+- Status: `success`, `already_calculated`, `failed`, etc.
+
+**Note:** In array mode, each task appends to this file, so wait for all tasks to complete before analyzing it.
+
+#### **Per-Assembly Results**
+
+For each successfully processed assembly:
+
+```
+# Individual assemblies
+$OUTPUT_DIR/assembly/{treatment}/{sample}/assembly_success_rate.txt
+$OUTPUT_DIR/assembly/{treatment}/{sample}/assembly_statistics.txt (updated)
+$OUTPUT_DIR/assembly/{treatment}/{sample}/assembly_mapping_stats.txt
+
+# Coassemblies
+$OUTPUT_DIR/coassembly/{treatment}/assembly_success_rate.txt
+$OUTPUT_DIR/coassembly/{treatment}/coassembly_mapping_stats.txt
+```
+
+### Checking Results While Jobs are Running
+
+```bash
+# Count completed tasks
+grep -c "success\|already_calculated" assembly_success_rates_summary.tsv
+
+# View completed success rates
+grep "success" assembly_success_rates_summary.tsv | column -t
+
+# Check for errors
+grep "failed\|no_assembly\|no_reads" assembly_success_rates_summary.tsv
+
+# Monitor specific treatment log
+tail -f slurm-<JOB_ID>_0.out
+```
 
 ## Output Files
 
