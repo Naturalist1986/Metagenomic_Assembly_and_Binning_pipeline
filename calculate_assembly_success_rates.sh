@@ -310,7 +310,7 @@ if [ "$MODE" = "individual" ] || [ "$MODE" = "both" ]; then
                     continue
                 fi
 
-                local treatment=$(basename "$treatment_dir")
+                treatment=$(basename "$treatment_dir")
 
                 # Skip if specific treatment requested and this isn't it
                 if [ -n "$TREATMENT_NAME" ] && [ "$treatment" != "$TREATMENT_NAME" ]; then
@@ -322,7 +322,7 @@ if [ "$MODE" = "individual" ] || [ "$MODE" = "both" ]; then
                         continue
                     fi
 
-                    local sample=$(basename "$sample_dir")
+                    sample=$(basename "$sample_dir")
                     calculate_individual_assembly_rate "$sample" "$treatment"
                 done
             done
@@ -347,7 +347,7 @@ if [ "$MODE" = "coassembly" ] || [ "$MODE" = "both" ]; then
                     continue
                 fi
 
-                local treatment=$(basename "$treatment_dir")
+                treatment=$(basename "$treatment_dir")
                 calculate_coassembly_rate "$treatment"
             done
         else
@@ -361,12 +361,12 @@ log "====== Summary ======"
 log "Results saved to: $OUTPUT_SUMMARY"
 
 # Count successes and failures
-local total_processed=$(tail -n +2 "$OUTPUT_SUMMARY" | wc -l)
-local successful=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "success")
-local already_calculated=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "already_calculated")
-local failed=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "failed")
-local no_assembly=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "no_assembly")
-local no_reads=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "no_reads")
+total_processed=$(tail -n +2 "$OUTPUT_SUMMARY" | wc -l)
+successful=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "success")
+already_calculated=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "already_calculated")
+failed=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "failed")
+no_assembly=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "no_assembly")
+no_reads=$(tail -n +2 "$OUTPUT_SUMMARY" | grep -c "no_reads")
 
 log "Total processed: $total_processed"
 log "  Newly calculated: $successful"
@@ -377,7 +377,7 @@ log "  No reads found: $no_reads"
 
 # Calculate average success rate for newly calculated
 if [ $successful -gt 0 ]; then
-    local avg_rate=$(tail -n +2 "$OUTPUT_SUMMARY" | grep "success" | awk -F'\t' '{sum+=$5; count++} END {if(count>0) printf "%.2f", sum/count; else print "0.00"}')
+    avg_rate=$(tail -n +2 "$OUTPUT_SUMMARY" | grep "success" | awk -F'\t' '{sum+=$5; count++} END {if(count>0) printf "%.2f", sum/count; else print "0.00"}')
     log "Average assembly success rate (newly calculated): ${avg_rate}%"
 fi
 
