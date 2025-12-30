@@ -20,11 +20,22 @@ The rate is included in the log output and saved to the assembly directory.
 
 ## Manual Calculation (Existing Assemblies)
 
-If you've already completed your pipeline and want to calculate success rates retroactively, use the standalone script:
+If you've already completed your pipeline and want to calculate success rates retroactively, use the standalone script.
+
+### Required Environment Variables
+
+Before running the script, you need to set two environment variables:
+
+1. **`OUTPUT_DIR`**: Path to your pipeline output directory (where assemblies are located)
+2. **`PIPELINE_DIR`**: Path to the pipeline scripts directory (where `00_config_utilities.sh` is located)
 
 ### Basic Usage
 
 ```bash
+# Set required environment variables
+export OUTPUT_DIR=/path/to/your/output/directory
+export PIPELINE_DIR=/path/to/Metagenomic_Assembly_and_Binning_pipeline
+
 # Calculate for all assemblies (both individual and coassembly)
 ./calculate_assembly_success_rates.sh
 
@@ -41,14 +52,32 @@ If you've already completed your pipeline and want to calculate success rates re
 ./calculate_assembly_success_rates.sh --mode individual --sample sample1 --treatment treatment1
 ```
 
+### Setting Variables Inline
+
+```bash
+# Set variables and run in one command
+OUTPUT_DIR=/path/to/output PIPELINE_DIR=/path/to/scripts ./calculate_assembly_success_rates.sh
+```
+
 ### Submit as SLURM Job
 
 ```bash
+# Set environment variables first
+export OUTPUT_DIR=/path/to/your/output/directory
+export PIPELINE_DIR=/path/to/Metagenomic_Assembly_and_Binning_pipeline
+
 # For all assemblies
 sbatch calculate_assembly_success_rates.sh
 
 # For specific mode or treatment
-sbatch calculate_assembly_success_rates.sh --mode individual --treatment treatment1
+sbatch --export=ALL calculate_assembly_success_rates.sh --mode individual --treatment treatment1
+```
+
+Or set variables inline when submitting:
+
+```bash
+# Set variables inline for SLURM
+sbatch --export=OUTPUT_DIR=/path/to/output,PIPELINE_DIR=/path/to/scripts calculate_assembly_success_rates.sh
 ```
 
 ### Command-Line Options
@@ -125,6 +154,25 @@ coassembly  control    ALL       12000000     89.67                    /path/to/
 5. **Strain heterogeneity**: High variation → lower rates
 
 ## Troubleshooting
+
+### Script can't find 00_config_utilities.sh
+
+**Error message:**
+```
+ERROR: Cannot find 00_config_utilities.sh
+```
+
+**Solution:**
+Set the `PIPELINE_DIR` environment variable to point to the directory containing the pipeline scripts:
+
+```bash
+export PIPELINE_DIR=/path/to/Metagenomic_Assembly_and_Binning_pipeline
+```
+
+If submitting via SLURM, use:
+```bash
+sbatch --export=PIPELINE_DIR=/path/to/scripts,OUTPUT_DIR=/path/to/output calculate_assembly_success_rates.sh
+```
 
 ### Script can't find input reads
 

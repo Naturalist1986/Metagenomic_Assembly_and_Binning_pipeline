@@ -18,6 +18,11 @@
 #   -t, --treatment NAME     Process specific treatment
 #   -o, --output FILE        Output summary report file (default: assembly_success_rates_summary.tsv)
 #   -h, --help               Show this help message
+#
+# Required Environment Variables:
+#   OUTPUT_DIR               Path to pipeline output directory
+#   PIPELINE_DIR             Path to pipeline scripts directory (where 00_config_utilities.sh is located)
+#                            If not set, will try to detect automatically
 
 # Default values
 MODE="both"
@@ -56,13 +61,45 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Source configuration and utilities
-if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
-    source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+# Determine pipeline directory
+if [ -n "$PIPELINE_DIR" ]; then
+    # User explicitly set PIPELINE_DIR
+    CONFIG_FILE="${PIPELINE_DIR}/00_config_utilities.sh"
+elif [ -n "$PIPELINE_SCRIPT_DIR" ]; then
+    # Legacy variable
+    CONFIG_FILE="${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
 else
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    source "${SCRIPT_DIR}/00_config_utilities.sh"
+    # Try to auto-detect (works when running script directly, not via SLURM)
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+    if [ -f "${SCRIPT_DIR}/00_config_utilities.sh" ]; then
+        CONFIG_FILE="${SCRIPT_DIR}/00_config_utilities.sh"
+    else
+        echo "ERROR: Cannot find 00_config_utilities.sh"
+        echo ""
+        echo "Please set PIPELINE_DIR environment variable to the directory containing"
+        echo "the pipeline scripts (where 00_config_utilities.sh is located)."
+        echo ""
+        echo "Example:"
+        echo "  export PIPELINE_DIR=/path/to/Metagenomic_Assembly_and_Binning_pipeline"
+        echo "  sbatch calculate_assembly_success_rates.sh"
+        echo ""
+        echo "Or set it inline:"
+        echo "  PIPELINE_DIR=/path/to/scripts OUTPUT_DIR=/path/to/output sbatch calculate_assembly_success_rates.sh"
+        exit 1
+    fi
 fi
+
+# Check if config file exists
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "ERROR: Configuration file not found: $CONFIG_FILE"
+    echo ""
+    echo "Please ensure PIPELINE_DIR is set correctly:"
+    echo "  export PIPELINE_DIR=/path/to/Metagenomic_Assembly_and_Binning_pipeline"
+    exit 1
+fi
+
+# Source configuration and utilities
+source "$CONFIG_FILE"
 
 # Initialize
 init_conda
