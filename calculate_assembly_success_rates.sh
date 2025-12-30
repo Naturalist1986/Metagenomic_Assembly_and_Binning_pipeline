@@ -106,6 +106,10 @@ fi
 # Source configuration and utilities
 source "$CONFIG_FILE"
 
+# Normalize OUTPUT_DIR (remove trailing slashes)
+OUTPUT_DIR="${OUTPUT_DIR%/}"
+export OUTPUT_DIR
+
 # Initialize
 init_conda
 TEMP_DIR=$(setup_temp_dir)

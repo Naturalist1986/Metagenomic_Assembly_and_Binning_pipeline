@@ -1056,6 +1056,11 @@ calculate_assembly_success_rate() {
     # Map reads back to contigs using BBMap
     local stats_file="${output_prefix}_stats.txt"
 
+    # Create log directory for mapping output
+    local mapping_log_dir="$(dirname "$output_prefix")"
+    mkdir -p "$mapping_log_dir"
+    local mapping_log="${output_prefix}_mapping.log"
+
     log "  Mapping reads back to contigs..."
     bbmap.sh \
         in="$r1_file" \
@@ -1073,7 +1078,7 @@ calculate_assembly_success_rate() {
         fast=t \
         maxindel=100 \
         ambiguous=random \
-        2>&1 | grep -E "(mapped:|Reads Used:)" | tee -a "${LOG_DIR}/${TREATMENT:-unknown}/${sample_name}_assembly_mapping.log" >&2
+        2>&1 | tee "$mapping_log" | grep -E "^(Percent )?mapped:" >&2
 
     local exit_code=${PIPESTATUS[0]}
 
@@ -1090,14 +1095,17 @@ calculate_assembly_success_rate() {
 
     # Extract mapped read count from stats file
     if [ -f "$stats_file" ]; then
-        # BBMap reports "mapped:" with the percentage
-        # We need to calculate from the percentage and total reads
-        percent_mapped=$(grep "mapped:" "$stats_file" | awk '{print $2}' | sed 's/%//' || echo "0.00")
+        # BBMap reports "Percent mapped:" with the percentage
+        # Get the main percentage value (not "properly paired" or other sub-categories)
+        percent_mapped=$(grep "^Percent mapped:" "$stats_file" | head -1 | awk '{print $NF}' | sed 's/%//' || echo "0.00")
 
         if [ -z "$percent_mapped" ] || [ "$percent_mapped" = "0.00" ]; then
-            # Try alternative parsing
-            percent_mapped=$(grep -i "percent mapped" "$stats_file" | awk '{print $NF}' | sed 's/%//' || echo "0.00")
+            # Try alternative parsing - look for "mapped:" line
+            percent_mapped=$(grep "^mapped:" "$stats_file" | head -1 | awk '{print $2}' | sed 's/%//' || echo "0.00")
         fi
+
+        # Clean up any potential newlines or extra characters
+        percent_mapped=$(echo "$percent_mapped" | tr -d '\n\r' | awk '{print $1}')
 
         # Calculate mapped reads from percentage
         mapped_reads=$(awk -v total="$total_reads" -v percent="$percent_mapped" 'BEGIN {printf "%.0f", total * percent / 100}')
