@@ -52,8 +52,11 @@ echo ""
 # Initialize
 init_conda
 
-# Setup output directories
-EUKFINDER_OUTPUT_DIR="${OUTPUT_DIR}/eukfinder/${TREATMENT}/${SAMPLE}"
+# Create output prefix for this specific bin
+OUTPUT_PREFIX="${SAMPLE}_${BINNER}_$(basename "$BIN_NAME" .fa)"
+
+# Setup output directories - one directory per bin
+EUKFINDER_OUTPUT_DIR="${OUTPUT_DIR}/eukfinder/${TREATMENT}/${OUTPUT_PREFIX}"
 mkdir -p "$EUKFINDER_OUTPUT_DIR"
 
 # Create log directory
@@ -64,7 +67,6 @@ TEMP_DIR=$(mktemp -d -p "${WORK_DIR}" eukfinder_${SAMPLE}_${BINNER}_XXXXXX)
 log "Created temporary directory: $TEMP_DIR"
 
 # Check if already processed
-OUTPUT_PREFIX="${SAMPLE}_${BINNER}_$(basename "$BIN_NAME" .fa)"
 CHECKPOINT_FILE="${EUKFINDER_OUTPUT_DIR}/.${OUTPUT_PREFIX}.done"
 
 if [ -f "$CHECKPOINT_FILE" ]; then
