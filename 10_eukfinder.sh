@@ -95,11 +95,21 @@ run_eukfinder() {
     if [ -n "$EUKFINDER_CENTRIFUGE_DB" ] && [ "$EUKFINDER_CENTRIFUGE_DB" != "/path/to/centrifuge/database" ]; then
         export CENTRIFUGE_DB="$EUKFINDER_CENTRIFUGE_DB"
         log "Using Centrifuge database: $CENTRIFUGE_DB"
+        if [ ! -e "$CENTRIFUGE_DB" ]; then
+            log "WARNING: Centrifuge database path does not exist: $CENTRIFUGE_DB"
+        fi
+    else
+        log "WARNING: EUKFINDER_CENTRIFUGE_DB not set or using placeholder path"
     fi
 
     if [ -n "$EUKFINDER_PLAST_DB" ] && [ "$EUKFINDER_PLAST_DB" != "/path/to/plast/database" ]; then
         export PLAST_DB="$EUKFINDER_PLAST_DB"
         log "Using PLAST database: $PLAST_DB"
+        if [ ! -e "$PLAST_DB" ]; then
+            log "WARNING: PLAST database path does not exist: $PLAST_DB"
+        fi
+    else
+        log "WARNING: EUKFINDER_PLAST_DB not set or using placeholder path"
     fi
 
     # Change to working directory (EukFinder creates outputs in current directory)
@@ -147,8 +157,16 @@ run_eukfinder() {
     conda deactivate
 
     if [ $exit_code -eq 0 ]; then
-        log "EukFinder completed successfully"
-        return 0
+        # Verify that results were actually created
+        if [ -d "Eukfinder_results" ] || [ -d "Intermediate_data" ]; then
+            log "EukFinder completed successfully"
+            return 0
+        else
+            log "ERROR: EukFinder exited with code 0 but produced no results"
+            log "This usually indicates a database configuration issue"
+            log "Check the log file at: ${LOG_DIR}/eukfinder/${TREATMENT}/${output_prefix}_eukfinder.log"
+            return 1
+        fi
     else
         log "ERROR: EukFinder failed with exit code: $exit_code"
         return 1
