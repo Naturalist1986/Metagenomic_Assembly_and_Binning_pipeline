@@ -39,6 +39,29 @@ echo ""
 echo "Found $TOTAL_BINS bins to process with EukFinder"
 echo ""
 
+# Check if taxonomy database has been updated
+TAXA_DB="${HOME}/.etetoolkit/taxa.sqlite"
+if [ ! -f "$TAXA_DB" ]; then
+    echo "WARNING: NCBI taxonomy database not found at $TAXA_DB"
+    echo ""
+    echo "To avoid database locking issues with parallel jobs, you should"
+    echo "update the taxonomy database once before running:"
+    echo ""
+    echo "  ./update_eukfinder_taxonomy.sh"
+    echo ""
+    read -p "Do you want to continue anyway? (y/n) " -n 1 -r
+    echo ""
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted. Please run ./update_eukfinder_taxonomy.sh first"
+        exit 1
+    fi
+elif [ "$TOTAL_BINS" -gt 1 ]; then
+    echo "NOTE: Running $TOTAL_BINS parallel jobs"
+    echo "If you encounter 'database is locked' errors, run this first:"
+    echo "  ./update_eukfinder_taxonomy.sh"
+    echo ""
+fi
+
 # Step 2: Calculate array size
 MAX_ARRAY_INDEX=$((TOTAL_BINS - 1))
 
