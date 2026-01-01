@@ -38,6 +38,15 @@ export COASSEMBLY_MEMORY="${COASSEMBLY_MEMORY:-500}"  # Memory in GB for coassem
 export BIN_REASSEMBLY_THREADS="${BIN_REASSEMBLY_THREADS:-8}"  # Threads for bin reassembly
 export BIN_REASSEMBLY_MEMORY="${BIN_REASSEMBLY_MEMORY:-32}"  # Memory in GB for bin reassembly
 
+# EukFinder parameters
+export EUKFINDER_THREADS="${EUKFINDER_THREADS:-48}"  # Number of threads for EukFinder
+export EUKFINDER_CHUNKS="${EUKFINDER_CHUNKS:-6}"  # Number of chunks for PLAST processing
+export EUKFINDER_TAXONOMY_UPDATE="${EUKFINDER_TAXONOMY_UPDATE:-False}"  # Update taxonomy database (True/False)
+export EUKFINDER_EVALUE="${EUKFINDER_EVALUE:-0.01}"  # E-value threshold for PLAST
+export EUKFINDER_PID="${EUKFINDER_PID:-60}"  # Percent identity threshold for PLAST
+export EUKFINDER_COV="${EUKFINDER_COV:-30}"  # Percent coverage threshold for PLAST
+export EUKFINDER_MHLEN="${EUKFINDER_MHLEN:-100}"  # Minimum hit length for Centrifuge
+
 # Pipeline parameters
 export MIN_COMPLETENESS="${MIN_COMPLETENESS:-90}"
 export MAX_CONTAMINATION="${MAX_CONTAMINATION:-5}"
