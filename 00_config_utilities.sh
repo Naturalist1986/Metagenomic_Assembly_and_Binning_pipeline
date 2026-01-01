@@ -22,9 +22,9 @@ export VIRSORTER2_DB="/sci/backup/aerez/aerez/moshea/virsorter2_db"
 export TRIMMOMATIC_DB="/sci/home/moshea/miniconda3/envs/metagenome_assembly/share/trimmomatic-0.39-2/adapters"
 
 # EukFinder database paths
-export EUKFINDER_CENTRIFUGE_DB="${EUKFINDER_CENTRIFUGE_DB:-/path/to/centrifuge/database}"
-export EUKFINDER_PLAST_DB="${EUKFINDER_PLAST_DB:-/path/to/plast/database}"
-export EUKFINDER_PLAST_ID_MAP="${EUKFINDER_PLAST_ID_MAP:-/path/to/plast/id_map}"
+export EUKFINDER_CENTRIFUGE_DB="${EUKFINDER_CENTRIFUGE_DB:-/sci/backup/ofinkel/moshea/eukfinder_databases/Centrifuge_Sept2020}"
+export EUKFINDER_PLAST_DB="${EUKFINDER_PLAST_DB:-/sci/backup/ofinkel/moshea/eukfinder_databases/PlastDB.fasta}"
+export EUKFINDER_PLAST_ID_MAP="${EUKFINDER_PLAST_ID_MAP:-/sci/backup/ofinkel/moshea/eukfinder_databases/PlastDB_map.txt}"
 
 # Trimmomatic parameters
 export TRIMMOMATIC_ADAPTERS="${TRIMMOMATIC_ADAPTERS:-TruSeq3-PE-2.fa}"
