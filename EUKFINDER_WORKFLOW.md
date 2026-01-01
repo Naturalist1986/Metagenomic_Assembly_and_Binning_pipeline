@@ -14,7 +14,7 @@ The EukFinder workflow consists of three main components:
 
 - Binning stage must be completed (03_binning.sh)
 - EukFinder conda environment must be installed and named `Eukfinder`
-- EukFinder databases must be set up
+- EukFinder databases must be set up and configured
 
 ### Installing EukFinder
 
@@ -27,6 +27,33 @@ conda activate Eukfinder
 
 # Set up databases (first time only)
 # Follow instructions at: https://github.com/RogerLab/Eukfinder/wiki
+```
+
+### Configuring Database Paths
+
+**IMPORTANT**: You must configure the database paths in `00_config_utilities.sh` before running EukFinder.
+
+Edit lines 25-26 in `00_config_utilities.sh`:
+
+```bash
+# EukFinder database paths
+export EUKFINDER_CENTRIFUGE_DB="/path/to/your/centrifuge/database"
+export EUKFINDER_PLAST_DB="/path/to/your/plast/database"
+```
+
+Replace the placeholder paths with your actual database locations. For example:
+
+```bash
+export EUKFINDER_CENTRIFUGE_DB="/sci/backup/aerez/aerez/moshea/eukfinder/centrifuge_db"
+export EUKFINDER_PLAST_DB="/sci/backup/aerez/aerez/moshea/eukfinder/plast_db"
+```
+
+Alternatively, you can set these as environment variables before running:
+
+```bash
+export EUKFINDER_CENTRIFUGE_DB="/your/centrifuge/path"
+export EUKFINDER_PLAST_DB="/your/plast/path"
+./submit_eukfinder.sh
 ```
 
 ## Usage
@@ -178,9 +205,19 @@ After EukFinder completes:
 - Verify EukFinder is installed: `conda list | grep eukfinder`
 
 ### Database errors
+- **IMPORTANT**: Verify database paths are correctly set in `00_config_utilities.sh`
+  ```bash
+  # Check your current settings
+  grep EUKFINDER_.*_DB 00_config_utilities.sh
+  ```
 - On first run, set `EUKFINDER_TAXONOMY_UPDATE=True`
 - Ensure sufficient disk space for databases
 - Check EukFinder installation and database setup
+- Verify database files exist at specified paths:
+  ```bash
+  ls -lh $EUKFINDER_CENTRIFUGE_DB
+  ls -lh $EUKFINDER_PLAST_DB
+  ```
 
 ### Out of memory errors
 - Reduce `--cpus-per-task` or increase `--mem` in 10_eukfinder.sh

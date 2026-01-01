@@ -91,6 +91,17 @@ run_eukfinder() {
         return 1
     fi
 
+    # Set database paths as environment variables
+    if [ -n "$EUKFINDER_CENTRIFUGE_DB" ] && [ "$EUKFINDER_CENTRIFUGE_DB" != "/path/to/centrifuge/database" ]; then
+        export CENTRIFUGE_DB="$EUKFINDER_CENTRIFUGE_DB"
+        log "Using Centrifuge database: $CENTRIFUGE_DB"
+    fi
+
+    if [ -n "$EUKFINDER_PLAST_DB" ] && [ "$EUKFINDER_PLAST_DB" != "/path/to/plast/database" ]; then
+        export PLAST_DB="$EUKFINDER_PLAST_DB"
+        log "Using PLAST database: $PLAST_DB"
+    fi
+
     # Change to working directory (EukFinder creates outputs in current directory)
     cd "$work_dir" || {
         log "ERROR: Could not change to working directory: $work_dir"
