@@ -85,8 +85,8 @@ run_eukfinder() {
     activate_env eukfinder
 
     # Check if EukFinder is available
-    if ! command -v Eukfinder &> /dev/null; then
-        log "ERROR: EukFinder not available in conda environment"
+    if ! command -v eukfinder &> /dev/null; then
+        log "ERROR: eukfinder command not available in conda environment"
         conda deactivate
         return 1
     fi
@@ -128,9 +128,9 @@ run_eukfinder() {
     log "  Minimum hit length: $mhlen"
 
     # Run EukFinder
-    log "Running: Eukfinder long_seqs -l $bin_file -o $output_prefix -n $threads -z $chunks -t $taxonomy_update -e $evalue --pid $pid --cov $cov --mhlen $mhlen"
+    log "Running: eukfinder long_seqs -l $bin_file -o $output_prefix -n $threads -z $chunks -t $taxonomy_update -e $evalue --pid $pid --cov $cov --mhlen $mhlen"
 
-    Eukfinder long_seqs \
+    eukfinder long_seqs \
         -l "$bin_file" \
         -o "$output_prefix" \
         -n "$threads" \
