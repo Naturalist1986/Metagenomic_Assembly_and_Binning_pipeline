@@ -226,15 +226,30 @@ Number of contigs: $NUM_CONTIGS
 Results:
 EOF
 
-    # Count sequences in each category
+    # Check if EukFinder created a summary_table.txt
     local results_dir="${output_dir}/Eukfinder_results"
-    if [ -d "$results_dir" ]; then
+    local summary_table="${results_dir}/summary_table.txt"
+
+    if [ -f "$summary_table" ]; then
+        # Parse the summary_table.txt file that EukFinder creates
+        log "Parsing summary_table.txt"
+        while IFS=$'\t' read -r group num_seq total_size; do
+            # Skip the header line
+            if [[ "$group" == "Group" ]]; then
+                continue
+            fi
+            # Format and add to summary
+            echo "  ${group}: ${num_seq} sequences, ${total_size} bp" >> "$summary_file"
+        done < "$summary_table"
+    elif [ -d "$results_dir" ]; then
+        # Fallback: Count sequences in individual FASTA files
+        log "Counting sequences in FASTA files"
         for category in Euk Unk EUnk Bact Arch Misc; do
             local cat_file="${results_dir}/${category}.fasta"
             if [ -f "$cat_file" ]; then
                 local count=$(grep -c "^>" "$cat_file" 2>/dev/null || echo "0")
                 local size=$(grep -v "^>" "$cat_file" | tr -d '\n' | wc -c 2>/dev/null || echo "0")
-                echo "  ${category}: $count contigs, $size bp" >> "$summary_file"
+                echo "  ${category}: $count sequences, $size bp" >> "$summary_file"
             else
                 echo "  ${category}: No sequences" >> "$summary_file"
             fi
