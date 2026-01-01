@@ -13,17 +13,17 @@ The EukFinder workflow consists of three main components:
 ## Prerequisites
 
 - Binning stage must be completed (03_binning.sh)
-- EukFinder conda environment must be installed and named `Eukfinder`
+- EukFinder conda environment must be installed and named `eukfinder`
 - EukFinder databases must be set up and configured
 
 ### Installing EukFinder
 
 ```bash
 # Create conda environment
-conda create -n Eukfinder -c bioconda eukfinder
+conda create -n eukfinder -c bioconda eukfinder
 
 # Activate environment
-conda activate Eukfinder
+conda activate eukfinder
 
 # Set up databases (first time only)
 # Follow instructions at: https://github.com/RogerLab/Eukfinder/wiki
@@ -201,7 +201,7 @@ After EukFinder completes:
 - Verify bin files are not empty
 
 ### EukFinder command not found
-- Activate the correct conda environment: `conda activate Eukfinder`
+- Activate the correct conda environment: `conda activate eukfinder`
 - Verify EukFinder is installed: `conda list | grep eukfinder`
 
 ### Database errors

@@ -82,7 +82,7 @@ run_eukfinder() {
     log "Running EukFinder on $bin_file"
 
     # Activate EukFinder conda environment
-    activate_env Eukfinder
+    activate_env eukfinder
 
     # Check if EukFinder is available
     if ! command -v Eukfinder &> /dev/null; then
