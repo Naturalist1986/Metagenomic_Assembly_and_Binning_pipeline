@@ -26,7 +26,7 @@ echo ""
 
 # Create header for TSV file
 cat > "$OUTPUT_FILE" << 'EOF'
-Treatment	Sample	Bin	Total_Sequences	Total_Size_bp	Euk_Seqs	Euk_bp	Euk_%	Bact_Seqs	Bact_bp	Bact_%	Arch_Seqs	Arch_bp	Arch_%	Unk_Seqs	Unk_bp	Unk_%	EUnk_Seqs	EUnk_bp	EUnk_%	Misc_Seqs	Misc_bp	Misc_%
+Treatment	Sample	Binner	Bin	Total_Sequences	Total_Size_bp	Euk_Seqs	Euk_bp	Euk_%	Bact_Seqs	Bact_bp	Bact_%	Arch_Seqs	Arch_bp	Arch_%	Unk_Seqs	Unk_bp	Unk_%	EUnk_Seqs	EUnk_bp	EUnk_%	Misc_Seqs	Misc_bp	Misc_%
 EOF
 
 # Find all summary_table.txt files and process them
@@ -39,20 +39,34 @@ for treatment_dir in "$EUKFINDER_DIR"/*; do
 
     treatment=$(basename "$treatment_dir")
 
-    for sample_dir in "$treatment_dir"/*; do
-        if [ ! -d "$sample_dir" ]; then
+    for bin_dir in "$treatment_dir"/*; do
+        if [ ! -d "$bin_dir" ]; then
             continue
         fi
 
-        sample=$(basename "$sample_dir")
-        results_dir="${sample_dir}/Eukfinder_results"
+        bin_dirname=$(basename "$bin_dir")
+        results_dir="${bin_dir}/Eukfinder_results"
         summary_table="${results_dir}/summary_table.txt"
 
         if [ ! -f "$summary_table" ]; then
             continue
         fi
 
-        echo "Processing: $treatment/$sample"
+        echo "Processing: $treatment/$bin_dirname"
+
+        # Parse bin information from directory name
+        # Format: <sample>_<binner>_<binname>
+        # Example: RH_metabat2_bin.4
+        if [[ "$bin_dirname" =~ ^(.+)_([^_]+)_(.+)$ ]]; then
+            sample="${BASH_REMATCH[1]}"
+            binner="${BASH_REMATCH[2]}"
+            bin_name="${BASH_REMATCH[3]}"
+        else
+            # Fallback if name doesn't match expected pattern
+            sample="$bin_dirname"
+            binner="unknown"
+            bin_name="$bin_dirname"
+        fi
 
         # Initialize variables for all categories
         declare -A seqs
@@ -94,12 +108,9 @@ for treatment_dir in "$EUKFINDER_DIR"/*; do
             done
         fi
 
-        # Try to extract bin name from sample directory
-        # Sample name format might be like "treatment_binner_binname" or just "treatment"
-        bin_name="$sample"
-
         # Output row to TSV
-        printf "%s\t%s\t%s\t%d\t%d" "$treatment" "$sample" "$bin_name" "$total_seqs" "$total_size" >> "$OUTPUT_FILE"
+        # Columns: Treatment, Sample, Binner, Bin, Total_Sequences, Total_Size_bp, ...
+        printf "%s\t%s\t%s\t%s\t%d\t%d" "$treatment" "$sample" "$binner" "$bin_name" "$total_seqs" "$total_size" >> "$OUTPUT_FILE"
 
         for category in Euk Bact Arch Unk EUnk Misc; do
             printf "\t%d\t%d\t%s" "${seqs[$category]}" "${sizes[$category]}" "${pct_seqs[$category]}" >> "$OUTPUT_FILE"
@@ -143,18 +154,18 @@ echo "-------------------" >> "$REPORT_FILE"
 
 # Calculate overall statistics
 awk -F'\t' 'NR>1 {
-    total_seqs += $4
-    total_size += $5
-    euk_seqs += $6
-    euk_bp += $7
-    bact_seqs += $9
-    bact_bp += $10
-    arch_seqs += $12
-    arch_bp += $13
-    unk_seqs += $15
-    unk_bp += $16
-    eunk_seqs += $18
-    eunk_bp += $19
+    total_seqs += $5
+    total_size += $6
+    euk_seqs += $7
+    euk_bp += $8
+    bact_seqs += $10
+    bact_bp += $11
+    arch_seqs += $13
+    arch_bp += $14
+    unk_seqs += $16
+    unk_bp += $17
+    eunk_seqs += $19
+    eunk_bp += $20
 }
 END {
     printf "Total sequences analyzed: %d (%d bp)\n\n", total_seqs, total_size
@@ -173,11 +184,11 @@ echo "" >> "$REPORT_FILE"
 echo "Top 10 Bins by Eukaryotic Content (by sequence count):" >> "$REPORT_FILE"
 echo "-------------------------------------------------------" >> "$REPORT_FILE"
 
-awk -F'\t' 'NR>1 {print $1"\t"$2"\t"$6"\t"$8"%"}' "$OUTPUT_FILE" | \
-    sort -t$'\t' -k3 -nr | \
+awk -F'\t' 'NR>1 {print $1"\t"$3"\t"$4"\t"$7"\t"$9"%"}' "$OUTPUT_FILE" | \
+    sort -t$'\t' -k4 -nr | \
     head -10 | \
-    awk -F'\t' 'BEGIN {printf "%-15s %-30s %12s %10s\n", "Treatment", "Sample", "Euk Seqs", "Euk %"}
-                {printf "%-15s %-30s %12s %10s\n", $1, $2, $3, $4}' >> "$REPORT_FILE"
+    awk -F'\t' 'BEGIN {printf "%-15s %-15s %-20s %12s %10s\n", "Treatment", "Binner", "Bin", "Euk Seqs", "Euk %"}
+                {printf "%-15s %-15s %-20s %12s %10s\n", $1, $2, $3, $4, $5}' >> "$REPORT_FILE"
 
 echo "" >> "$REPORT_FILE"
 echo "Results by Treatment:" >> "$REPORT_FILE"
@@ -185,9 +196,9 @@ echo "--------------------" >> "$REPORT_FILE"
 
 awk -F'\t' 'NR>1 {
     treatment[$1]++
-    euk[$1] += $6
-    bact[$1] += $9
-    total[$1] += $4
+    euk[$1] += $7
+    bact[$1] += $10
+    total[$1] += $5
 }
 END {
     printf "%-15s %10s %12s %12s %12s %10s\n", "Treatment", "Bins", "Total Seqs", "Euk Seqs", "Bact Seqs", "Euk %"
