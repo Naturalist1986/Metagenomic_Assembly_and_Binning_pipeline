@@ -24,6 +24,7 @@ export TRIMMOMATIC_DB="/sci/home/moshea/miniconda3/envs/metagenome_assembly/shar
 # EukFinder database paths
 export EUKFINDER_CENTRIFUGE_DB="${EUKFINDER_CENTRIFUGE_DB:-/path/to/centrifuge/database}"
 export EUKFINDER_PLAST_DB="${EUKFINDER_PLAST_DB:-/path/to/plast/database}"
+export EUKFINDER_PLAST_ID_MAP="${EUKFINDER_PLAST_ID_MAP:-/path/to/plast/id_map}"
 
 # Trimmomatic parameters
 export TRIMMOMATIC_ADAPTERS="${TRIMMOMATIC_ADAPTERS:-TruSeq3-PE-2.fa}"

@@ -91,26 +91,28 @@ run_eukfinder() {
         return 1
     fi
 
-    # Set database paths as environment variables
-    if [ -n "$EUKFINDER_CENTRIFUGE_DB" ] && [ "$EUKFINDER_CENTRIFUGE_DB" != "/path/to/centrifuge/database" ]; then
-        export CENTRIFUGE_DB="$EUKFINDER_CENTRIFUGE_DB"
-        log "Using Centrifuge database: $CENTRIFUGE_DB"
-        if [ ! -e "$CENTRIFUGE_DB" ]; then
-            log "WARNING: Centrifuge database path does not exist: $CENTRIFUGE_DB"
-        fi
-    else
-        log "WARNING: EUKFINDER_CENTRIFUGE_DB not set or using placeholder path"
+    # Verify database paths are configured
+    if [ -z "$EUKFINDER_CENTRIFUGE_DB" ] || [ "$EUKFINDER_CENTRIFUGE_DB" == "/path/to/centrifuge/database" ]; then
+        log "ERROR: EUKFINDER_CENTRIFUGE_DB not configured in 00_config_utilities.sh"
+        conda deactivate
+        return 1
     fi
 
-    if [ -n "$EUKFINDER_PLAST_DB" ] && [ "$EUKFINDER_PLAST_DB" != "/path/to/plast/database" ]; then
-        export PLAST_DB="$EUKFINDER_PLAST_DB"
-        log "Using PLAST database: $PLAST_DB"
-        if [ ! -e "$PLAST_DB" ]; then
-            log "WARNING: PLAST database path does not exist: $PLAST_DB"
-        fi
-    else
-        log "WARNING: EUKFINDER_PLAST_DB not set or using placeholder path"
+    if [ -z "$EUKFINDER_PLAST_DB" ] || [ "$EUKFINDER_PLAST_DB" == "/path/to/plast/database" ]; then
+        log "ERROR: EUKFINDER_PLAST_DB not configured in 00_config_utilities.sh"
+        conda deactivate
+        return 1
     fi
+
+    if [ -z "$EUKFINDER_PLAST_ID_MAP" ] || [ "$EUKFINDER_PLAST_ID_MAP" == "/path/to/plast/id_map" ]; then
+        log "ERROR: EUKFINDER_PLAST_ID_MAP not configured in 00_config_utilities.sh"
+        conda deactivate
+        return 1
+    fi
+
+    log "Using Centrifuge database: $EUKFINDER_CENTRIFUGE_DB"
+    log "Using PLAST database: $EUKFINDER_PLAST_DB"
+    log "Using PLAST ID map: $EUKFINDER_PLAST_ID_MAP"
 
     # Change to working directory (EukFinder creates outputs in current directory)
     cd "$work_dir" || {
@@ -138,18 +140,21 @@ run_eukfinder() {
     log "  Minimum hit length: $mhlen"
 
     # Run EukFinder
-    log "Running: eukfinder long_seqs -l $bin_file -o $output_prefix -n $threads -z $chunks -t $taxonomy_update -e $evalue --pid $pid --cov $cov --mhlen $mhlen"
+    log "Running: eukfinder long_seqs -l $bin_file -o $output_prefix --mhlen $mhlen --cdb $EUKFINDER_CENTRIFUGE_DB -n $threads -z $chunks -t $taxonomy_update -p $EUKFINDER_PLAST_DB -m $EUKFINDER_PLAST_ID_MAP -e $evalue --pid $pid --cov $cov"
 
     eukfinder long_seqs \
         -l "$bin_file" \
         -o "$output_prefix" \
+        --mhlen "$mhlen" \
+        --cdb "$EUKFINDER_CENTRIFUGE_DB" \
         -n "$threads" \
         -z "$chunks" \
         -t "$taxonomy_update" \
+        -p "$EUKFINDER_PLAST_DB" \
+        -m "$EUKFINDER_PLAST_ID_MAP" \
         -e "$evalue" \
         --pid "$pid" \
         --cov "$cov" \
-        --mhlen "$mhlen" \
         2>&1 | tee "${LOG_DIR}/eukfinder/${TREATMENT}/${output_prefix}_eukfinder.log"
 
     local exit_code=${PIPESTATUS[0]}

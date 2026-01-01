@@ -31,21 +31,36 @@ conda activate eukfinder
 
 ### Configuring Database Paths
 
-**IMPORTANT**: You must configure the database paths in `00_config_utilities.sh` before running EukFinder.
+**IMPORTANT**: You must configure THREE database paths in `00_config_utilities.sh` before running EukFinder.
 
-Edit lines 25-26 in `00_config_utilities.sh`:
+Edit lines 25-27 in `00_config_utilities.sh`:
 
 ```bash
 # EukFinder database paths
 export EUKFINDER_CENTRIFUGE_DB="/path/to/your/centrifuge/database"
 export EUKFINDER_PLAST_DB="/path/to/your/plast/database"
+export EUKFINDER_PLAST_ID_MAP="/path/to/your/plast/id_map"
 ```
 
-Replace the placeholder paths with your actual database locations. For example:
+Replace the placeholder paths with your actual database locations.
+
+**To find these paths**, check your EukFinder database directory:
 
 ```bash
-export EUKFINDER_CENTRIFUGE_DB="/sci/backup/aerez/aerez/moshea/eukfinder/centrifuge_db"
-export EUKFINDER_PLAST_DB="/sci/backup/aerez/aerez/moshea/eukfinder/plast_db"
+ls -la /path/to/eukfinder_databases/
+```
+
+Common structures:
+- **Centrifuge DB**: Look for files with `.cf` extensions (e.g., `centrifuge_db.1.cf`)
+- **PLAST DB**: Look for FASTA files (e.g., `uniprot_sprot.fasta` or similar)
+- **PLAST ID Map**: Look for mapping files (e.g., `idmapping.dat` or `uniprot_idmap.txt`)
+
+Example configuration:
+
+```bash
+export EUKFINDER_CENTRIFUGE_DB="/sci/backup/ofinkel/moshea/eukfinder_databases/centrifuge/p_compressed"
+export EUKFINDER_PLAST_DB="/sci/backup/ofinkel/moshea/eukfinder_databases/plast/uniprot_sprot.fasta"
+export EUKFINDER_PLAST_ID_MAP="/sci/backup/ofinkel/moshea/eukfinder_databases/plast/idmapping.dat"
 ```
 
 Alternatively, you can set these as environment variables before running:
@@ -53,6 +68,7 @@ Alternatively, you can set these as environment variables before running:
 ```bash
 export EUKFINDER_CENTRIFUGE_DB="/your/centrifuge/path"
 export EUKFINDER_PLAST_DB="/your/plast/path"
+export EUKFINDER_PLAST_ID_MAP="/your/id_map/path"
 ./submit_eukfinder.sh
 ```
 
