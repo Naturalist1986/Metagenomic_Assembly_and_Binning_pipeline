@@ -69,15 +69,25 @@ fi
 READS_R1=""
 READS_R2=""
 
-# Location 1: In assembly directory (coassembly mode)
-if [ -f "${OUTPUT_DIR}/assembly/${TREATMENT}/filtered_1.fastq.gz" ]; then
+# Location 1: In coassembly/treatment/merged_reads directory
+if [ -f "${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/filtered_1.fastq.gz" ]; then
+    READS_R1="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/filtered_1.fastq.gz"
+    READS_R2="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/filtered_2.fastq.gz"
+elif [ -f "${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/merged_1.fastq.gz" ]; then
+    READS_R1="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/merged_1.fastq.gz"
+    READS_R2="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/merged_2.fastq.gz"
+elif [ -f "${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/${TREATMENT}_1.fastq.gz" ]; then
+    READS_R1="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/${TREATMENT}_1.fastq.gz"
+    READS_R2="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/${TREATMENT}_2.fastq.gz"
+# Location 2: In assembly directory (coassembly mode)
+elif [ -f "${OUTPUT_DIR}/assembly/${TREATMENT}/filtered_1.fastq.gz" ]; then
     READS_R1="${OUTPUT_DIR}/assembly/${TREATMENT}/filtered_1.fastq.gz"
     READS_R2="${OUTPUT_DIR}/assembly/${TREATMENT}/filtered_2.fastq.gz"
-# Location 2: In quality_filtering directory
+# Location 3: In quality_filtering directory
 elif [ -f "${OUTPUT_DIR}/quality_filtering/${TREATMENT}/filtered_1.fastq.gz" ]; then
     READS_R1="${OUTPUT_DIR}/quality_filtering/${TREATMENT}/filtered_1.fastq.gz"
     READS_R2="${OUTPUT_DIR}/quality_filtering/${TREATMENT}/filtered_2.fastq.gz"
-# Location 3: Try coassembly_reads directory
+# Location 4: Try coassembly_reads directory
 elif [ -f "${OUTPUT_DIR}/coassembly_reads/${TREATMENT}_1.fastq.gz" ]; then
     READS_R1="${OUTPUT_DIR}/coassembly_reads/${TREATMENT}_1.fastq.gz"
     READS_R2="${OUTPUT_DIR}/coassembly_reads/${TREATMENT}_2.fastq.gz"
@@ -86,6 +96,7 @@ fi
 if [ -z "$READS_R1" ] || [ ! -f "$READS_R1" ]; then
     echo "ERROR: Could not find read files for treatment $TREATMENT"
     echo "Searched in:"
+    echo "  ${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/"
     echo "  ${OUTPUT_DIR}/assembly/${TREATMENT}/"
     echo "  ${OUTPUT_DIR}/quality_filtering/${TREATMENT}/"
     echo "  ${OUTPUT_DIR}/coassembly_reads/"
