@@ -70,7 +70,10 @@ READS_R1=""
 READS_R2=""
 
 # Location 1: In coassembly/treatment/merged_reads directory
-if [ -f "${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/filtered_1.fastq.gz" ]; then
+if [ -f "${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/merged_R1.fastq.gz" ]; then
+    READS_R1="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/merged_R1.fastq.gz"
+    READS_R2="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/merged_R2.fastq.gz"
+elif [ -f "${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/filtered_1.fastq.gz" ]; then
     READS_R1="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/filtered_1.fastq.gz"
     READS_R2="${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/filtered_2.fastq.gz"
 elif [ -f "${OUTPUT_DIR}/coassembly/${TREATMENT}/merged_reads/merged_1.fastq.gz" ]; then
