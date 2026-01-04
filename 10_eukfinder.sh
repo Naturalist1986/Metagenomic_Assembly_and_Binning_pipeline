@@ -20,17 +20,25 @@ fi
 # Get bin info from array task ID
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
 
-# Read the largest bins list
-LARGEST_BINS_FILE="${OUTPUT_DIR}/largest_bins_list.txt"
+# Use bins list file from environment variable if set, otherwise use largest bins list
+if [ -n "$BINS_LIST_FILE" ]; then
+    # Using custom bins list (e.g., all bins)
+    BINS_FILE="$BINS_LIST_FILE"
+    echo "Using bins list: $BINS_FILE"
+else
+    # Default to largest bins list
+    BINS_FILE="${OUTPUT_DIR}/largest_bins_list.txt"
+    echo "Using largest bins list: $BINS_FILE"
+fi
 
-if [ ! -f "$LARGEST_BINS_FILE" ]; then
-    echo "ERROR: Largest bins file not found: $LARGEST_BINS_FILE"
-    echo "Please run identify_largest_bins.sh first"
+if [ ! -f "$BINS_FILE" ]; then
+    echo "ERROR: Bins file not found: $BINS_FILE"
+    echo "Please run identify_largest_bins.sh or identify_all_bins.sh first"
     exit 1
 fi
 
 # Get the bin for this task ID (skip comment lines)
-BIN_INFO=$(grep -v "^#" "$LARGEST_BINS_FILE" | sed -n "$((TASK_ID + 1))p")
+BIN_INFO=$(grep -v "^#" "$BINS_FILE" | sed -n "$((TASK_ID + 1))p")
 
 if [ -z "$BIN_INFO" ]; then
     echo "No bin found for array index $TASK_ID"
