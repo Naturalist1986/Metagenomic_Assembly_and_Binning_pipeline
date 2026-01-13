@@ -186,13 +186,16 @@ run_comebin() {
 
     conda deactivate
 
-    # Check results
-    if [ $exit_code -eq 0 ] && [ -d "${output_dir}/comebin_res_bins" ]; then
-        local bin_count=$(ls -1 "${output_dir}/comebin_res_bins"/*.fa 2>/dev/null | wc -l)
+    # Check results - COMEBin creates output in comebin_res/comebin_res_bins/ subdirectory
+    local bins_dir="${output_dir}/comebin_res/comebin_res_bins"
+    if [ $exit_code -eq 0 ] && [ -d "$bins_dir" ]; then
+        local bin_count=$(ls -1 "${bins_dir}"/*.fa 2>/dev/null | wc -l)
         log "COMEBin completed successfully with $bin_count bins"
+        log "Bins location: $bins_dir"
         return 0
     else
         log "COMEBin failed with exit code: $exit_code"
+        log "Expected bins directory not found: $bins_dir"
         return 1
     fi
 }
@@ -217,15 +220,17 @@ Tool: COMEBin
 Results:
 EOF
 
+    local bins_dir="${comebin_dir}/comebin_res/comebin_res_bins"
     local total_bins=0
-    if [ -d "${comebin_dir}/comebin_res_bins" ]; then
-        total_bins=$(ls -1 "${comebin_dir}/comebin_res_bins"/*.fa 2>/dev/null | wc -l)
+    if [ -d "$bins_dir" ]; then
+        total_bins=$(ls -1 "${bins_dir}"/*.fa 2>/dev/null | wc -l)
         echo "  Total bins: $total_bins" >> "$summary_file"
+        echo "  Bins location: $bins_dir" >> "$summary_file"
         echo "" >> "$summary_file"
 
         # Add bin size information
         echo "Bin Size Information:" >> "$summary_file"
-        for bin in "${comebin_dir}/comebin_res_bins"/*.fa; do
+        for bin in "${bins_dir}"/*.fa; do
             if [ -f "$bin" ]; then
                 local bin_name=$(basename "$bin")
                 local bin_size=$(grep -v "^>" "$bin" | tr -d '\n' | wc -c)
@@ -234,7 +239,7 @@ EOF
             fi
         done
     else
-        echo "  No bins directory found" >> "$summary_file"
+        echo "  No bins directory found at: $bins_dir" >> "$summary_file"
     fi
 
     log "COMEBin summary created: $summary_file"
@@ -260,15 +265,17 @@ Tool: COMEBin
 Results:
 EOF
 
+    local bins_dir="${comebin_dir}/comebin_res/comebin_res_bins"
     local total_bins=0
-    if [ -d "${comebin_dir}/comebin_res_bins" ]; then
-        total_bins=$(ls -1 "${comebin_dir}/comebin_res_bins"/*.fa 2>/dev/null | wc -l)
+    if [ -d "$bins_dir" ]; then
+        total_bins=$(ls -1 "${bins_dir}"/*.fa 2>/dev/null | wc -l)
         echo "  Total bins: $total_bins" >> "$summary_file"
+        echo "  Bins location: $bins_dir" >> "$summary_file"
         echo "" >> "$summary_file"
 
         # Add bin size information
         echo "Bin Size Information:" >> "$summary_file"
-        for bin in "${comebin_dir}/comebin_res_bins"/*.fa; do
+        for bin in "${bins_dir}"/*.fa; do
             if [ -f "$bin" ]; then
                 local bin_name=$(basename "$bin")
                 local bin_size=$(grep -v "^>" "$bin" | tr -d '\n' | wc -c)
@@ -277,7 +284,7 @@ EOF
             fi
         done
     else
-        echo "  No bins directory found" >> "$summary_file"
+        echo "  No bins directory found at: $bins_dir" >> "$summary_file"
     fi
 
     log "COMEBin summary created: $summary_file"
@@ -287,9 +294,10 @@ EOF
 validate_comebin_treatment() {
     local treatment="$1"
     local comebin_dir="${OUTPUT_DIR}/binning/${treatment}/comebin"
+    local bins_dir="${comebin_dir}/comebin_res/comebin_res_bins"
 
     # Check if bins were produced
-    if [ -d "${comebin_dir}/comebin_res_bins" ] && [ "$(ls -A ${comebin_dir}/comebin_res_bins/*.fa 2>/dev/null)" ]; then
+    if [ -d "$bins_dir" ] && [ "$(ls -A ${bins_dir}/*.fa 2>/dev/null)" ]; then
         return 0
     fi
 
@@ -301,9 +309,10 @@ validate_comebin_sample() {
     local sample_name="$1"
     local treatment="$2"
     local comebin_dir="${OUTPUT_DIR}/binning/${treatment}/${sample_name}/comebin"
+    local bins_dir="${comebin_dir}/comebin_res/comebin_res_bins"
 
     # Check if bins were produced
-    if [ -d "${comebin_dir}/comebin_res_bins" ] && [ "$(ls -A ${comebin_dir}/comebin_res_bins/*.fa 2>/dev/null)" ]; then
+    if [ -d "$bins_dir" ] && [ "$(ls -A ${bins_dir}/*.fa 2>/dev/null)" ]; then
         return 0
     fi
 
@@ -359,7 +368,8 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
         mkdir -p "$comebin_dir"
 
         # Check if already processed
-        if [ -d "${comebin_dir}/comebin_res_bins" ] && [ "$(ls -A ${comebin_dir}/comebin_res_bins 2>/dev/null)" ]; then
+        local bins_dir="${comebin_dir}/comebin_res/comebin_res_bins"
+        if [ -d "$bins_dir" ] && [ "$(ls -A ${bins_dir} 2>/dev/null)" ]; then
             log "Treatment $treatment already binned with COMEBin, skipping..."
             return 0
         fi
@@ -511,7 +521,8 @@ else
         mkdir -p "$comebin_dir"
 
         # Check if already processed
-        if [ -d "${comebin_dir}/comebin_res_bins" ] && [ "$(ls -A ${comebin_dir}/comebin_res_bins 2>/dev/null)" ]; then
+        local bins_dir="${comebin_dir}/comebin_res/comebin_res_bins"
+        if [ -d "$bins_dir" ] && [ "$(ls -A ${bins_dir} 2>/dev/null)" ]; then
             log "Sample $sample_name already binned with COMEBin, skipping..."
             return 0
         fi
