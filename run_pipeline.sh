@@ -982,24 +982,24 @@ submit_job() {
     cmd+=" ${SCRIPT_DIR}/${script}"
     
     if [ "$DRY_RUN" = true ]; then
-        echo "🔍 [DRY RUN] Would execute: $cmd"
-        echo "   Array size: $array_size"
-        echo "   Indices: $(get_filtered_indices $stage)"
+        echo "🔍 [DRY RUN] Would execute: $cmd" >&2
+        echo "   Array size: $array_size" >&2
+        echo "   Indices: $(get_filtered_indices $stage)" >&2
         echo "999999"  # Fake job ID for dry run
     else
-        echo "🚀 Submitting stage $stage: $stage_name"
-        echo "   Array size: $array_size samples/treatments"
-        echo "   Command: $cmd"
-        
+        echo "🚀 Submitting stage $stage: $stage_name" >&2
+        echo "   Array size: $array_size samples/treatments" >&2
+        echo "   Command: $cmd" >&2
+
         # Submit job and capture job ID
         result=$($cmd 2>&1)
         if [[ $result =~ Submitted\ batch\ job\ ([0-9]+) ]]; then
             job_id="${BASH_REMATCH[1]}"
-            echo "✅ Submitted job $job_id for stage $stage ($stage_name)"
+            echo "✅ Submitted job $job_id for stage $stage ($stage_name)" >&2
             echo "$job_id"
         else
-            echo "❌ Error submitting job: $result"
-            echo ""
+            echo "❌ Error submitting job: $result" >&2
+            echo "" >&2
         fi
     fi
 }
