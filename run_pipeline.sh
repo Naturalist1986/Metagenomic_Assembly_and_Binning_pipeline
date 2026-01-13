@@ -506,7 +506,11 @@ else
 fi
 
 if [ "$USE_COMEBIN" = true ]; then
-    STAGE_NAMES[3]="Binning (COMEBin)"
+    if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+        STAGE_NAMES[3]="Binning (COMEBin - treatment-level)"
+    else
+        STAGE_NAMES[3]="Binning (COMEBin - sample-level)"
+    fi
     STAGE_NAMES[4]="Bin Refinement (sample-level)"
     STAGE_NAMES[5]="Bin Reassembly (sample-level)"
     STAGE_NAMES[6]="MAGpurify (sample-level)"
@@ -653,8 +657,8 @@ calculate_array_size() {
         return
     fi
     
-    # Special handling for stage 3 in treatment-level binning mode
-    if [ "$stage" = "3" ] && [ "$TREATMENT_LEVEL_BINNING" = true ]; then
+    # Special handling for stage 3 in treatment-level binning mode OR COMEBin with coassembly
+    if [ "$stage" = "3" ] && { [ "$TREATMENT_LEVEL_BINNING" = true ] || { [ "$USE_COMEBIN" = true ] && [ "$ASSEMBLY_MODE" = "coassembly" ]; }; }; then
         # Treatment-level binning: one job per treatment
         local treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -797,8 +801,8 @@ get_filtered_indices() {
         return
     fi
     
-    # Special handling for stage 3 in treatment-level binning mode
-    if [ "$stage" = "3" ] && [ "$TREATMENT_LEVEL_BINNING" = true ]; then
+    # Special handling for stage 3 in treatment-level binning mode OR COMEBin with coassembly
+    if [ "$stage" = "3" ] && { [ "$TREATMENT_LEVEL_BINNING" = true ] || { [ "$USE_COMEBIN" = true ] && [ "$ASSEMBLY_MODE" = "coassembly" ]; }; }; then
         # Treatment-level binning: return treatment indices
         treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
