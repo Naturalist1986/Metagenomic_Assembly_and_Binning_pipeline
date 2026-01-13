@@ -146,12 +146,11 @@ run_plasclass() {
         return 1
     fi
     
-    # Run PlasClass - FIXED: correct parameter usage
+    # Run PlasClass - uses default threshold
     classify_fasta.py \
         -f "$assembly_file" \
         -o "${output_dir}/plasclass_results.tsv" \
         -p ${SLURM_CPUS_PER_TASK:-4} \
-        --threshold 0.5 \
         2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_plasclass.log"
     
     local exit_code=${PIPESTATUS[0]}
