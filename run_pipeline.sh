@@ -1090,24 +1090,24 @@ fi
 
 # Submit optional stages
 for opt_stage in "${OPTIONAL_STAGES_TO_RUN[@]}"; do
-    local script="${OPTIONAL_STAGE_SCRIPTS[$opt_stage]}"
-    local stage_name="${OPTIONAL_STAGE_NAMES[$opt_stage]}"
+    script="${OPTIONAL_STAGE_SCRIPTS[$opt_stage]}"
+    stage_name="${OPTIONAL_STAGE_NAMES[$opt_stage]}"
 
     echo "📄 Processing optional stage: $stage_name"
     echo "🚀 Submitting optional stage: $stage_name"
 
     # Build and submit sbatch command similar to submit_job function
     # (simplified version, assumes sample-level processing)
-    local slurm_log_dir="${OUTPUT_DIR}/logs/slurm"
+    slurm_log_dir="${OUTPUT_DIR}/logs/slurm"
     mkdir -p "$slurm_log_dir"
 
-    local total_samples=$(get_total_samples)
+    total_samples=$(get_total_samples)
     if [ $total_samples -eq 0 ]; then
         echo "⚠️  No samples to process for optional stage $opt_stage"
         continue
     fi
 
-    local cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
+    cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
     cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
     cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
@@ -1137,7 +1137,7 @@ for opt_stage in "${OPTIONAL_STAGES_TO_RUN[@]}"; do
         cmd+=" --account=${SLURM_ACCOUNT}"
     fi
 
-    local script_basename=$(basename -- "$script" .sh)
+    script_basename=$(basename -- "$script" .sh)
     cmd+=" --output=${slurm_log_dir}/${script_basename}_%A_%a.log"
     cmd+=" --error=${slurm_log_dir}/${script_basename}_%A_%a.err"
 
@@ -1196,13 +1196,13 @@ for stage in "${STAGES_TO_RUN[@]}"; do
     if [ "$stage" = "2" ] && [ "$SKIP_PLASMID_DETECTION" = false ]; then
         echo "📄 Processing optional stage: Plasmid Detection"
 
-        local script="${OPTIONAL_STAGE_SCRIPTS[plasmid_detection]}"
-        local stage_name="${OPTIONAL_STAGE_NAMES[plasmid_detection]}"
-        local slurm_log_dir="${OUTPUT_DIR}/logs/slurm"
+        script="${OPTIONAL_STAGE_SCRIPTS[plasmid_detection]}"
+        stage_name="${OPTIONAL_STAGE_NAMES[plasmid_detection]}"
+        slurm_log_dir="${OUTPUT_DIR}/logs/slurm"
 
-        local total_samples=$(get_total_samples)
+        total_samples=$(get_total_samples)
         if [ $total_samples -gt 0 ]; then
-            local cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
+            cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
             cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
             cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},TREATMENTS_FILE=${TREATMENTS_FILE}"
             cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
@@ -1232,7 +1232,7 @@ for stage in "${STAGES_TO_RUN[@]}"; do
                 cmd+=" --account=${SLURM_ACCOUNT}"
             fi
 
-            local script_basename=$(basename -- "$script" .sh)
+            script_basename=$(basename -- "$script" .sh)
             cmd+=" --output=${slurm_log_dir}/${script_basename}_%A_%a.log"
             cmd+=" --error=${slurm_log_dir}/${script_basename}_%A_%a.err"
 
