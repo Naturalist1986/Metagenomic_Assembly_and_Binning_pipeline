@@ -1204,8 +1204,32 @@ for stage in "${STAGES_TO_RUN[@]}"; do
         stage_name="${OPTIONAL_STAGE_NAMES[plasmid_detection]}"
         slurm_log_dir="${OUTPUT_DIR}/logs/slurm"
 
+        # Calculate filtered sample count (respecting treatment/sample filters)
         total_samples=$(get_total_samples)
-        if [ $total_samples -gt 0 ]; then
+        filtered_count=0
+
+        if [ ${#SPECIFIC_TREATMENTS[@]} -gt 0 ] || [ ${#SPECIFIC_SAMPLES[@]} -gt 0 ]; then
+            for i in $(seq 0 $((total_samples - 1))); do
+                sample_info=$(get_sample_info_by_index $i 2>/dev/null)
+                if [ -n "$sample_info" ]; then
+                    IFS='|' read -r sample_name treatment _ _ <<< "$sample_info"
+
+                    # Check filters
+                    if ! is_in_array "$treatment" "${SPECIFIC_TREATMENTS[@]}"; then
+                        continue
+                    fi
+                    if ! is_in_array "$sample_name" "${SPECIFIC_SAMPLES[@]}"; then
+                        continue
+                    fi
+
+                    ((filtered_count++))
+                fi
+            done
+        else
+            filtered_count=$total_samples
+        fi
+
+        if [ $filtered_count -gt 0 ]; then
             cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
             cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
             cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},TREATMENTS_FILE=${TREATMENTS_FILE}"
@@ -1240,10 +1264,56 @@ for stage in "${STAGES_TO_RUN[@]}"; do
             cmd+=" --output=${slurm_log_dir}/${script_basename}_%A_%a.log"
             cmd+=" --error=${slurm_log_dir}/${script_basename}_%A_%a.err"
 
-            if [ $total_samples -gt 1 ]; then
-                cmd+=" --array=0-$((total_samples - 1))"
-            else
-                cmd+=" --array=0"
+            # Build filtered array indices
+            if [ $filtered_count -gt 1 ]; then
+                # Get filtered indices
+                filtered_indices=()
+                for i in $(seq 0 $((total_samples - 1))); do
+                    sample_info=$(get_sample_info_by_index $i 2>/dev/null)
+                    if [ -n "$sample_info" ]; then
+                        IFS='|' read -r sample_name treatment _ _ <<< "$sample_info"
+
+                        # Check filters
+                        if ! is_in_array "$treatment" "${SPECIFIC_TREATMENTS[@]}"; then
+                            continue
+                        fi
+                        if ! is_in_array "$sample_name" "${SPECIFIC_SAMPLES[@]}"; then
+                            continue
+                        fi
+
+                        filtered_indices+=($i)
+                    fi
+                done
+
+                # Create array string
+                array_str=""
+                for idx in "${filtered_indices[@]}"; do
+                    if [ -z "$array_str" ]; then
+                        array_str="$idx"
+                    else
+                        array_str="$array_str,$idx"
+                    fi
+                done
+                cmd+=" --array=${array_str}"
+            elif [ $filtered_count -eq 1 ]; then
+                # Find the single filtered index
+                for i in $(seq 0 $((total_samples - 1))); do
+                    sample_info=$(get_sample_info_by_index $i 2>/dev/null)
+                    if [ -n "$sample_info" ]; then
+                        IFS='|' read -r sample_name treatment _ _ <<< "$sample_info"
+
+                        # Check filters
+                        if ! is_in_array "$treatment" "${SPECIFIC_TREATMENTS[@]}"; then
+                            continue
+                        fi
+                        if ! is_in_array "$sample_name" "${SPECIFIC_SAMPLES[@]}"; then
+                            continue
+                        fi
+
+                        cmd+=" --array=$i"
+                        break
+                    fi
+                done
             fi
 
             cmd+=" ${SCRIPT_DIR}/${script}"
@@ -1253,6 +1323,7 @@ for stage in "${STAGES_TO_RUN[@]}"; do
                 previous_job_id="999999"
             else
                 echo "🚀 Submitting optional stage: $stage_name"
+                echo "   Array size: $filtered_count samples"
                 echo "   Command: $cmd"
                 result=$($cmd 2>&1)
                 if [[ $result =~ Submitted\ batch\ job\ ([0-9]+) ]]; then
