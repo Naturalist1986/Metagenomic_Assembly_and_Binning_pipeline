@@ -19,6 +19,299 @@ else
     source "${SCRIPT_DIR}/00_config_utilities.sh"
 fi
 
+# ===== FUNCTION DEFINITIONS (must be defined before use) =====
+
+# Create BAM files for treatment-level (used in coassembly mode)
+create_bam_files_treatment() {
+    local assembly="$1"
+    local read1="$2"
+    local read2="$3"
+    local output_dir="$4"
+    local sample_name="$5"
+
+    log "Creating BAM for sample $sample_name..."
+
+    # Activate environment with bowtie2 and samtools
+    activate_env metawrap-env
+
+    # Use shared index if it exists, otherwise create it
+    local index_base="${TEMP_DIR}/shared_index"
+    if [ ! -f "${index_base}.1.bt2" ]; then
+        log "Building shared bowtie2 index..."
+        bowtie2-build \
+            --threads ${SLURM_CPUS_PER_TASK:-50} \
+            "$assembly" \
+            "$index_base" \
+            2>&1 | tee "${LOG_DIR}/${TREATMENT}_comebin_index.log"
+
+        if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            log "ERROR: Failed to build bowtie2 index"
+            conda deactivate
+            return 1
+        fi
+    fi
+
+    log "Mapping reads with bowtie2..."
+
+    local sam_file="${TEMP_DIR}/${sample_name}.sam"
+    local bam_file="${TEMP_DIR}/${sample_name}.bam"
+    local sorted_bam="${output_dir}/${sample_name}.sorted.bam"
+
+    bowtie2 \
+        -x "$index_base" \
+        -1 "$read1" \
+        -2 "$read2" \
+        -S "$sam_file" \
+        -p ${SLURM_CPUS_PER_TASK:-50} \
+        --sensitive \
+        2>&1 | tee -a "${LOG_DIR}/${TREATMENT}_comebin_mapping.log"
+
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+        log "ERROR: Bowtie2 mapping failed for $sample_name"
+        conda deactivate
+        return 1
+    fi
+
+    log "Converting SAM to BAM and sorting..."
+
+    samtools view -@ ${SLURM_CPUS_PER_TASK:-50} -bS "$sam_file" > "$bam_file"
+    samtools sort -@ ${SLURM_CPUS_PER_TASK:-50} "$bam_file" -o "$sorted_bam"
+    samtools index "$sorted_bam"
+
+    # Clean up intermediate files
+    rm -f "$sam_file" "$bam_file"
+
+    conda deactivate
+
+    log "BAM file created: $sorted_bam"
+    return 0
+}
+
+# Create BAM files for sample-level (used in individual assembly mode)
+create_bam_files_sample() {
+    local assembly="$1"
+    local read1="$2"
+    local read2="$3"
+    local output_dir="$4"
+    local sample_name="$5"
+
+    log "Building bowtie2 index..."
+
+    # Activate environment with bowtie2 and samtools
+    activate_env metawrap-env
+
+    local index_base="${output_dir}/${sample_name}_index"
+
+    bowtie2-build \
+        --threads ${SLURM_CPUS_PER_TASK:-50} \
+        "$assembly" \
+        "$index_base" \
+        2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_comebin_index.log"
+
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+        log "ERROR: Failed to build bowtie2 index"
+        conda deactivate
+        return 1
+    fi
+
+    log "Mapping reads with bowtie2..."
+
+    local sam_file="${output_dir}/${sample_name}.sam"
+    local bam_file="${output_dir}/${sample_name}.bam"
+    local sorted_bam="${output_dir}/${sample_name}.sorted.bam"
+
+    bowtie2 \
+        -x "$index_base" \
+        -1 "$read1" \
+        -2 "$read2" \
+        -S "$sam_file" \
+        -p ${SLURM_CPUS_PER_TASK:-50} \
+        --sensitive \
+        2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_comebin_mapping.log"
+
+    if [ ${PIPESTATUS[0]} -ne 0 ]; then
+        log "ERROR: Bowtie2 mapping failed"
+        conda deactivate
+        return 1
+    fi
+
+    log "Converting SAM to BAM and sorting..."
+
+    samtools view -@ ${SLURM_CPUS_PER_TASK:-50} -bS "$sam_file" > "$bam_file"
+    samtools sort -@ ${SLURM_CPUS_PER_TASK:-50} "$bam_file" -o "$sorted_bam"
+    samtools index "$sorted_bam"
+
+    # Clean up intermediate files
+    rm -f "$sam_file" "$bam_file"
+    rm -f "${index_base}".*
+
+    conda deactivate
+
+    log "BAM file created: $sorted_bam"
+    return 0
+}
+
+# Run COMEBin binning
+run_comebin() {
+    local assembly_file="$1"
+    local bam_dir="$2"
+    local output_dir="$3"
+    local identifier="$4"  # sample name or treatment name
+
+    log "Running COMEBin binning module..."
+
+    # Activate COMEBin environment
+    activate_env comebin
+
+    # Check if COMEBin is available
+    if [ ! -f "${CONDA_BASE}/envs/comebin/bin/run_comebin.sh" ]; then
+        log "ERROR: COMEBin not available in conda environment"
+        log "Expected: ${CONDA_BASE}/envs/comebin/bin/run_comebin.sh"
+        conda deactivate
+        return 1
+    fi
+
+    log "Running COMEBin command:"
+    log "bash run_comebin.sh -a $assembly_file -o $output_dir -p $bam_dir -t ${SLURM_CPUS_PER_TASK:-50}"
+
+    # Run COMEBin
+    bash "${CONDA_BASE}/envs/comebin/bin/run_comebin.sh" \
+        -a "$assembly_file" \
+        -o "$output_dir" \
+        -p "$bam_dir" \
+        -t ${SLURM_CPUS_PER_TASK:-50} \
+        2>&1 | tee "${LOG_DIR}/${TREATMENT}/${identifier}_comebin.log"
+
+    local exit_code=${PIPESTATUS[0]}
+
+    conda deactivate
+
+    # Check results
+    if [ $exit_code -eq 0 ] && [ -d "${output_dir}/comebin_res_bins" ]; then
+        local bin_count=$(ls -1 "${output_dir}/comebin_res_bins"/*.fa 2>/dev/null | wc -l)
+        log "COMEBin completed successfully with $bin_count bins"
+        return 0
+    else
+        log "COMEBin failed with exit code: $exit_code"
+        return 1
+    fi
+}
+
+# Create summary for treatment-level
+create_comebin_summary_treatment() {
+    local treatment="$1"
+    local comebin_dir="$2"
+    local sample_count="$3"
+    local summary_file="${comebin_dir}/comebin_summary.txt"
+
+    cat > "$summary_file" << EOF
+COMEBin Binning Summary for Treatment: $treatment
+==================================================
+
+Date: $(date)
+Treatment: $treatment
+Samples used: $sample_count
+Mode: Treatment-level (coassembly)
+Tool: COMEBin
+
+Results:
+EOF
+
+    local total_bins=0
+    if [ -d "${comebin_dir}/comebin_res_bins" ]; then
+        total_bins=$(ls -1 "${comebin_dir}/comebin_res_bins"/*.fa 2>/dev/null | wc -l)
+        echo "  Total bins: $total_bins" >> "$summary_file"
+        echo "" >> "$summary_file"
+
+        # Add bin size information
+        echo "Bin Size Information:" >> "$summary_file"
+        for bin in "${comebin_dir}/comebin_res_bins"/*.fa; do
+            if [ -f "$bin" ]; then
+                local bin_name=$(basename "$bin")
+                local bin_size=$(grep -v "^>" "$bin" | tr -d '\n' | wc -c)
+                local contig_count=$(grep -c "^>" "$bin")
+                echo "  $bin_name: $bin_size bp, $contig_count contigs" >> "$summary_file"
+            fi
+        done
+    else
+        echo "  No bins directory found" >> "$summary_file"
+    fi
+
+    log "COMEBin summary created: $summary_file"
+}
+
+# Create summary for sample-level
+create_comebin_summary_sample() {
+    local sample_name="$1"
+    local treatment="$2"
+    local comebin_dir="$3"
+    local summary_file="${comebin_dir}/comebin_summary.txt"
+
+    cat > "$summary_file" << EOF
+COMEBin Binning Summary for $sample_name
+=========================================
+
+Date: $(date)
+Sample: $sample_name
+Treatment: $treatment
+Mode: Sample-level (individual assembly)
+Tool: COMEBin
+
+Results:
+EOF
+
+    local total_bins=0
+    if [ -d "${comebin_dir}/comebin_res_bins" ]; then
+        total_bins=$(ls -1 "${comebin_dir}/comebin_res_bins"/*.fa 2>/dev/null | wc -l)
+        echo "  Total bins: $total_bins" >> "$summary_file"
+        echo "" >> "$summary_file"
+
+        # Add bin size information
+        echo "Bin Size Information:" >> "$summary_file"
+        for bin in "${comebin_dir}/comebin_res_bins"/*.fa; do
+            if [ -f "$bin" ]; then
+                local bin_name=$(basename "$bin")
+                local bin_size=$(grep -v "^>" "$bin" | tr -d '\n' | wc -c)
+                local contig_count=$(grep -c "^>" "$bin")
+                echo "  $bin_name: $bin_size bp, $contig_count contigs" >> "$summary_file"
+            fi
+        done
+    else
+        echo "  No bins directory found" >> "$summary_file"
+    fi
+
+    log "COMEBin summary created: $summary_file"
+}
+
+# Validation for treatment-level
+validate_comebin_treatment() {
+    local treatment="$1"
+    local comebin_dir="${OUTPUT_DIR}/binning/${treatment}/comebin"
+
+    # Check if bins were produced
+    if [ -d "${comebin_dir}/comebin_res_bins" ] && [ "$(ls -A ${comebin_dir}/comebin_res_bins/*.fa 2>/dev/null)" ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# Validation for sample-level
+validate_comebin_sample() {
+    local sample_name="$1"
+    local treatment="$2"
+    local comebin_dir="${OUTPUT_DIR}/binning/${treatment}/${sample_name}/comebin"
+
+    # Check if bins were produced
+    if [ -d "${comebin_dir}/comebin_res_bins" ] && [ "$(ls -A ${comebin_dir}/comebin_res_bins/*.fa 2>/dev/null)" ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+# ===== MAIN EXECUTION =====
+
 # Initialize
 init_conda
 TEMP_DIR=$(setup_temp_dir)
@@ -331,297 +624,6 @@ else
         exit 1
     fi
 fi
-
-# ===== SHARED FUNCTIONS =====
-
-# Create BAM files for treatment-level (used in coassembly mode)
-create_bam_files_treatment() {
-    local assembly="$1"
-    local read1="$2"
-    local read2="$3"
-    local output_dir="$4"
-    local sample_name="$5"
-
-    log "Creating BAM for sample $sample_name..."
-
-    # Activate environment with bowtie2 and samtools
-    activate_env metawrap-env
-
-    # Use shared index if it exists, otherwise create it
-    local index_base="${TEMP_DIR}/shared_index"
-    if [ ! -f "${index_base}.1.bt2" ]; then
-        log "Building shared bowtie2 index..."
-        bowtie2-build \
-            --threads ${SLURM_CPUS_PER_TASK:-50} \
-            "$assembly" \
-            "$index_base" \
-            2>&1 | tee "${LOG_DIR}/${TREATMENT}_comebin_index.log"
-
-        if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            log "ERROR: Failed to build bowtie2 index"
-            conda deactivate
-            return 1
-        fi
-    fi
-
-    log "Mapping reads with bowtie2..."
-
-    local sam_file="${TEMP_DIR}/${sample_name}.sam"
-    local bam_file="${TEMP_DIR}/${sample_name}.bam"
-    local sorted_bam="${output_dir}/${sample_name}.sorted.bam"
-
-    bowtie2 \
-        -x "$index_base" \
-        -1 "$read1" \
-        -2 "$read2" \
-        -S "$sam_file" \
-        -p ${SLURM_CPUS_PER_TASK:-50} \
-        --sensitive \
-        2>&1 | tee -a "${LOG_DIR}/${TREATMENT}_comebin_mapping.log"
-
-    if [ ${PIPESTATUS[0]} -ne 0 ]; then
-        log "ERROR: Bowtie2 mapping failed for $sample_name"
-        conda deactivate
-        return 1
-    fi
-
-    log "Converting SAM to BAM and sorting..."
-
-    samtools view -@ ${SLURM_CPUS_PER_TASK:-50} -bS "$sam_file" > "$bam_file"
-    samtools sort -@ ${SLURM_CPUS_PER_TASK:-50} "$bam_file" -o "$sorted_bam"
-    samtools index "$sorted_bam"
-
-    # Clean up intermediate files
-    rm -f "$sam_file" "$bam_file"
-
-    conda deactivate
-
-    log "BAM file created: $sorted_bam"
-    return 0
-}
-
-# Create BAM files for sample-level (used in individual assembly mode)
-create_bam_files_sample() {
-    local assembly="$1"
-    local read1="$2"
-    local read2="$3"
-    local output_dir="$4"
-    local sample_name="$5"
-
-    log "Building bowtie2 index..."
-
-    # Activate environment with bowtie2 and samtools
-    activate_env metawrap-env
-
-    local index_base="${output_dir}/${sample_name}_index"
-
-    bowtie2-build \
-        --threads ${SLURM_CPUS_PER_TASK:-50} \
-        "$assembly" \
-        "$index_base" \
-        2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_comebin_index.log"
-
-    if [ ${PIPESTATUS[0]} -ne 0 ]; then
-        log "ERROR: Failed to build bowtie2 index"
-        conda deactivate
-        return 1
-    fi
-
-    log "Mapping reads with bowtie2..."
-
-    local sam_file="${output_dir}/${sample_name}.sam"
-    local bam_file="${output_dir}/${sample_name}.bam"
-    local sorted_bam="${output_dir}/${sample_name}.sorted.bam"
-
-    bowtie2 \
-        -x "$index_base" \
-        -1 "$read1" \
-        -2 "$read2" \
-        -S "$sam_file" \
-        -p ${SLURM_CPUS_PER_TASK:-50} \
-        --sensitive \
-        2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_comebin_mapping.log"
-
-    if [ ${PIPESTATUS[0]} -ne 0 ]; then
-        log "ERROR: Bowtie2 mapping failed"
-        conda deactivate
-        return 1
-    fi
-
-    log "Converting SAM to BAM and sorting..."
-
-    samtools view -@ ${SLURM_CPUS_PER_TASK:-50} -bS "$sam_file" > "$bam_file"
-    samtools sort -@ ${SLURM_CPUS_PER_TASK:-50} "$bam_file" -o "$sorted_bam"
-    samtools index "$sorted_bam"
-
-    # Clean up intermediate files
-    rm -f "$sam_file" "$bam_file"
-    rm -f "${index_base}".*
-
-    conda deactivate
-
-    log "BAM file created: $sorted_bam"
-    return 0
-}
-
-# Run COMEBin binning
-run_comebin() {
-    local assembly_file="$1"
-    local bam_dir="$2"
-    local output_dir="$3"
-    local identifier="$4"  # sample name or treatment name
-
-    log "Running COMEBin binning module..."
-
-    # Activate COMEBin environment
-    activate_env comebin
-
-    # Check if COMEBin is available
-    if [ ! -f "${CONDA_BASE}/envs/comebin/bin/run_comebin.sh" ]; then
-        log "ERROR: COMEBin not available in conda environment"
-        log "Expected: ${CONDA_BASE}/envs/comebin/bin/run_comebin.sh"
-        conda deactivate
-        return 1
-    fi
-
-    log "Running COMEBin command:"
-    log "bash run_comebin.sh -a $assembly_file -o $output_dir -p $bam_dir -t ${SLURM_CPUS_PER_TASK:-50}"
-
-    # Run COMEBin
-    bash "${CONDA_BASE}/envs/comebin/bin/run_comebin.sh" \
-        -a "$assembly_file" \
-        -o "$output_dir" \
-        -p "$bam_dir" \
-        -t ${SLURM_CPUS_PER_TASK:-50} \
-        2>&1 | tee "${LOG_DIR}/${TREATMENT}/${identifier}_comebin.log"
-
-    local exit_code=${PIPESTATUS[0]}
-
-    conda deactivate
-
-    # Check results
-    if [ $exit_code -eq 0 ] && [ -d "${output_dir}/comebin_res_bins" ]; then
-        local bin_count=$(ls -1 "${output_dir}/comebin_res_bins"/*.fa 2>/dev/null | wc -l)
-        log "COMEBin completed successfully with $bin_count bins"
-        return 0
-    else
-        log "COMEBin failed with exit code: $exit_code"
-        return 1
-    fi
-}
-
-# Create summary for treatment-level
-create_comebin_summary_treatment() {
-    local treatment="$1"
-    local comebin_dir="$2"
-    local sample_count="$3"
-    local summary_file="${comebin_dir}/comebin_summary.txt"
-
-    cat > "$summary_file" << EOF
-COMEBin Binning Summary for Treatment: $treatment
-==================================================
-
-Date: $(date)
-Treatment: $treatment
-Samples used: $sample_count
-Mode: Treatment-level (coassembly)
-Tool: COMEBin
-
-Results:
-EOF
-
-    local total_bins=0
-    if [ -d "${comebin_dir}/comebin_res_bins" ]; then
-        total_bins=$(ls -1 "${comebin_dir}/comebin_res_bins"/*.fa 2>/dev/null | wc -l)
-        echo "  Total bins: $total_bins" >> "$summary_file"
-        echo "" >> "$summary_file"
-
-        # Add bin size information
-        echo "Bin Size Information:" >> "$summary_file"
-        for bin in "${comebin_dir}/comebin_res_bins"/*.fa; do
-            if [ -f "$bin" ]; then
-                local bin_name=$(basename "$bin")
-                local bin_size=$(grep -v "^>" "$bin" | tr -d '\n' | wc -c)
-                local contig_count=$(grep -c "^>" "$bin")
-                echo "  $bin_name: $bin_size bp, $contig_count contigs" >> "$summary_file"
-            fi
-        done
-    else
-        echo "  No bins directory found" >> "$summary_file"
-    fi
-
-    log "COMEBin summary created: $summary_file"
-}
-
-# Create summary for sample-level
-create_comebin_summary_sample() {
-    local sample_name="$1"
-    local treatment="$2"
-    local comebin_dir="$3"
-    local summary_file="${comebin_dir}/comebin_summary.txt"
-
-    cat > "$summary_file" << EOF
-COMEBin Binning Summary for $sample_name
-=========================================
-
-Date: $(date)
-Sample: $sample_name
-Treatment: $treatment
-Mode: Sample-level (individual assembly)
-Tool: COMEBin
-
-Results:
-EOF
-
-    local total_bins=0
-    if [ -d "${comebin_dir}/comebin_res_bins" ]; then
-        total_bins=$(ls -1 "${comebin_dir}/comebin_res_bins"/*.fa 2>/dev/null | wc -l)
-        echo "  Total bins: $total_bins" >> "$summary_file"
-        echo "" >> "$summary_file"
-
-        # Add bin size information
-        echo "Bin Size Information:" >> "$summary_file"
-        for bin in "${comebin_dir}/comebin_res_bins"/*.fa; do
-            if [ -f "$bin" ]; then
-                local bin_name=$(basename "$bin")
-                local bin_size=$(grep -v "^>" "$bin" | tr -d '\n' | wc -c)
-                local contig_count=$(grep -c "^>" "$bin")
-                echo "  $bin_name: $bin_size bp, $contig_count contigs" >> "$summary_file"
-            fi
-        done
-    else
-        echo "  No bins directory found" >> "$summary_file"
-    fi
-
-    log "COMEBin summary created: $summary_file"
-}
-
-# Validation for treatment-level
-validate_comebin_treatment() {
-    local treatment="$1"
-    local comebin_dir="${OUTPUT_DIR}/binning/${treatment}/comebin"
-
-    # Check if bins were produced
-    if [ -d "${comebin_dir}/comebin_res_bins" ] && [ "$(ls -A ${comebin_dir}/comebin_res_bins/*.fa 2>/dev/null)" ]; then
-        return 0
-    fi
-
-    return 1
-}
-
-# Validation for sample-level
-validate_comebin_sample() {
-    local sample_name="$1"
-    local treatment="$2"
-    local comebin_dir="${OUTPUT_DIR}/binning/${treatment}/${sample_name}/comebin"
-
-    # Check if bins were produced
-    if [ -d "${comebin_dir}/comebin_res_bins" ] && [ "$(ls -A ${comebin_dir}/comebin_res_bins/*.fa 2>/dev/null)" ]; then
-        return 0
-    fi
-
-    return 1
-}
 
 # Cleanup
 cleanup_temp_dir "$TEMP_DIR"
