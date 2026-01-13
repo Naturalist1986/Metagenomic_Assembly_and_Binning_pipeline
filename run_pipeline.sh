@@ -13,6 +13,7 @@ SPECIFIC_TREATMENTS=()
 SPECIFIC_SAMPLES=()
 ASSEMBLY_MODE="individual"
 TREATMENT_LEVEL_BINNING=false
+USE_COMEBIN=false  # Use COMEBin for binning instead of MetaWRAP
 SKIP_MERGE_LANES=true  # Skip lane merging by default (optional stage)
 SKIP_PLASMID_DETECTION=true  # Skip plasmid detection by default (optional stage)
 
@@ -29,6 +30,7 @@ OPTIONS:
     -e, --end-stage NUM           End at stage NUM (0 to 9) [default: 9]
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
+    --comebin                     Use COMEBin for binning instead of MetaWRAP (requires comebin conda env)
     -t, --treatment NAME          Run only for specific treatment/group (can be used multiple times)
     -m, --sample NAME             Run only for specific sample (can be used multiple times)
     -i, --input-dir PATH          Input directory containing FASTQ files
@@ -73,7 +75,7 @@ STAGES:
     0  - Quality Filtering (Trimmomatic)
     1  - Validation & Repair (validates paired-end sync, repairs if needed)
     2  - Assembly (MetaSPAdes - individual or co-assembly)
-    3  - Binning (sample-level or treatment-level based on -b flag)
+    3  - Binning (MetaWRAP or COMEBin - sample/treatment-level based on flags)
     4  - Bin Refinement (DAS Tool - sample-level or treatment-level based on -b flag)
     5  - Bin Reassembly (MetaWRAP - sample-level or treatment-level based on -b flag)
     6  - MAGpurify (contamination removal - sample-level or treatment-level based on -b flag)
@@ -90,11 +92,18 @@ ADDITIONAL TOOLS (run separately after pipeline completes):
                          (Requires all treatments to complete stage 9 first)
 
 BINNING MODES:
-    By default, binning is performed at the sample level (one binning job per sample).
+    By default, binning is performed at the sample level using MetaWRAP (MetaBat2, MaxBin2, Concoct).
+
     Use --treatment-level-binning to bin at the treatment level instead:
     - All samples in a treatment are binned together
     - Useful for co-assembly workflows or when you want bins across replicates
     - Uses 03_binning_treatment_level.sh instead of 03_binning.sh
+
+    Use --comebin to use COMEBin for binning instead of MetaWRAP:
+    - Uses contrastive multi-view representation learning
+    - Requires 'comebin' conda environment
+    - Uses BAM files from MetaWRAP work_files or creates them with bowtie2
+    - Uses 03b_comebin.sh instead of standard binning scripts
 
 EXAMPLES:
     # Run complete pipeline (default: stages 0-9, no lane merge or plasmid detection)
@@ -115,6 +124,9 @@ EXAMPLES:
     # Co-assembly with treatment-level binning
     $0 --assembly-mode coassembly --treatment-level-binning \\
        -i /path/to/fastq -o /path/to/output
+
+    # Use COMEBin for binning instead of MetaWRAP
+    $0 --comebin -i /path/to/fastq -o /path/to/output
 
     # Run specific treatment only
     $0 --treatment control -i /path/to/fastq -o /path/to/output
@@ -183,6 +195,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -b|--treatment-level-binning)
             TREATMENT_LEVEL_BINNING=true
+            shift
+            ;;
+        --comebin)
+            USE_COMEBIN=true
             shift
             ;;
         -t|--treatment)
@@ -467,7 +483,9 @@ get_assembly_script() {
 
 # Function to get the correct binning script based on mode
 get_binning_script() {
-    if [ "$TREATMENT_LEVEL_BINNING" = true ]; then
+    if [ "$USE_COMEBIN" = true ]; then
+        echo "03b_comebin.sh"
+    elif [ "$TREATMENT_LEVEL_BINNING" = true ]; then
         echo "03_binning_treatment_level.sh"
     else
         echo "03_binning.sh"
@@ -487,7 +505,14 @@ else
     STAGE_NAMES[2]="Assembly (per sample)"
 fi
 
-if [ "$TREATMENT_LEVEL_BINNING" = true ]; then
+if [ "$USE_COMEBIN" = true ]; then
+    STAGE_NAMES[3]="Binning (COMEBin)"
+    STAGE_NAMES[4]="Bin Refinement (sample-level)"
+    STAGE_NAMES[5]="Bin Reassembly (sample-level)"
+    STAGE_NAMES[6]="MAGpurify (sample-level)"
+    STAGE_NAMES[7]="CheckM2 (sample-level)"
+    STAGE_NAMES[8]="Bin Selection (sample-level)"
+elif [ "$TREATMENT_LEVEL_BINNING" = true ]; then
     STAGE_NAMES[3]="Binning (treatment-level)"
     STAGE_NAMES[4]="Bin Refinement (treatment-level)"
     STAGE_NAMES[5]="Bin Reassembly (treatment-level)"
@@ -895,6 +920,7 @@ submit_job() {
     cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR}"
     cmd+=",ASSEMBLY_MODE=${ASSEMBLY_MODE}"
     cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING}"
+    cmd+=",USE_COMEBIN=${USE_COMEBIN}"
     cmd+=",TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE}"
     cmd+=",SLURM_ACCOUNT=${SLURM_ACCOUNT}"
@@ -986,7 +1012,11 @@ echo "Input directory: $INPUT_DIR"
 echo "Output directory: $OUTPUT_DIR"
 echo "Sample sheet: ${SAMPLE_SHEET:-Auto-discovery}"
 echo "Assembly mode: $ASSEMBLY_MODE"
-echo "Binning mode: $([ "$TREATMENT_LEVEL_BINNING" = true ] && echo "treatment-level" || echo "sample-level")"
+if [ "$USE_COMEBIN" = true ]; then
+    echo "Binning mode: COMEBin"
+else
+    echo "Binning mode: $([ "$TREATMENT_LEVEL_BINNING" = true ] && echo "treatment-level" || echo "sample-level")"
+fi
 echo "SLURM account: ${SLURM_ACCOUNT:-default}"
 echo "Start stage: $START_STAGE (${STAGE_NAMES[$START_STAGE]})"
 echo "End stage: $END_STAGE (${STAGE_NAMES[$END_STAGE]})"
@@ -1079,7 +1109,7 @@ for opt_stage in "${OPTIONAL_STAGES_TO_RUN[@]}"; do
 
     local cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
     cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
-    cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},TREATMENTS_FILE=${TREATMENTS_FILE}"
+    cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
 
     # Export assembly parameters if set
@@ -1174,7 +1204,7 @@ for stage in "${STAGES_TO_RUN[@]}"; do
         if [ $total_samples -gt 0 ]; then
             local cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
             cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
-            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},TREATMENTS_FILE=${TREATMENTS_FILE}"
+            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},TREATMENTS_FILE=${TREATMENTS_FILE}"
             cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
 
             # Export assembly parameters if set
