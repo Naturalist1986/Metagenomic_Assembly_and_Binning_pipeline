@@ -47,20 +47,32 @@ fi
 stage_plasmid_detection() {
     local sample_name="$1"
     local treatment="$2"
-    
+
     log "Running plasmid detection for $sample_name ($treatment)"
-    
-    local assembly_dir="${OUTPUT_DIR}/assembly/${treatment}/${sample_name}"
+    log "Assembly mode: ${ASSEMBLY_MODE:-individual}"
+
+    # Determine assembly directory based on assembly mode
+    local assembly_dir
+    if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
+        # In coassembly mode, assembly is per treatment
+        assembly_dir="${OUTPUT_DIR}/coassembly/${treatment}"
+        log "Using coassembly directory: $assembly_dir"
+    else
+        # In individual mode, assembly is per sample
+        assembly_dir="${OUTPUT_DIR}/assembly/${treatment}/${sample_name}"
+        log "Using individual assembly directory: $assembly_dir"
+    fi
+
     local output_dir="${OUTPUT_DIR}/plasmids/${treatment}/${sample_name}"
-    
+
     mkdir -p "$output_dir"
-    
+
     # Check if already processed
     if [ -f "${output_dir}/plasmids_final.fasta" ] && [ -f "${output_dir}/non_plasmids.fasta" ]; then
         log "Sample $sample_name already processed, skipping..."
         return 0
     fi
-    
+
     # Check for input assembly - try multiple possible names
     local assembly_file=""
     for possible_file in \
@@ -70,21 +82,21 @@ stage_plasmid_detection() {
         "${assembly_dir}/assembly.fasta" \
         "${assembly_dir}/${sample_name}_contigs.fasta" \
         "${assembly_dir}/${sample_name}_scaffolds.fasta"; do
-        
+
         if [ -f "$possible_file" ] && [ -s "$possible_file" ]; then
             assembly_file="$possible_file"
             log "Found assembly file: $assembly_file"
             break
         fi
     done
-    
+
     if [ -z "$assembly_file" ]; then
         log "ERROR: No assembly found for $sample_name"
-        log "  Checked locations:"
-        log "    ${assembly_dir}/contigs.fasta"
-        log "    ${assembly_dir}/scaffolds.fasta"
-        log "    ${assembly_dir}/final_contigs.fasta"
-        log "    ${assembly_dir}/assembly.fasta"
+        log "  Checked locations in: $assembly_dir"
+        log "    contigs.fasta"
+        log "    scaffolds.fasta"
+        log "    final_contigs.fasta"
+        log "    assembly.fasta"
         return 1
     fi
     
