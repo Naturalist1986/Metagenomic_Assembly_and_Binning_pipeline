@@ -50,11 +50,23 @@ stage_comebin() {
     local treatment="$2"
 
     log "Running COMEBin binning for $sample_name ($treatment)"
+    log "Assembly mode: ${ASSEMBLY_MODE:-individual}"
 
     local comebin_dir="${OUTPUT_DIR}/binning/${treatment}/${sample_name}/comebin"
-    local assembly_dir="${OUTPUT_DIR}/assembly/${treatment}/${sample_name}"
     local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample_name}"
     local metawrap_binning_dir="${OUTPUT_DIR}/binning/${treatment}/${sample_name}"
+
+    # Determine assembly directory based on assembly mode
+    local assembly_dir
+    if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
+        # In coassembly mode, assembly is per treatment
+        assembly_dir="${OUTPUT_DIR}/coassembly/${treatment}"
+        log "Using coassembly directory: $assembly_dir"
+    else
+        # In individual mode, assembly is per sample
+        assembly_dir="${OUTPUT_DIR}/assembly/${treatment}/${sample_name}"
+        log "Using individual assembly directory: $assembly_dir"
+    fi
 
     mkdir -p "$comebin_dir"
 
@@ -83,6 +95,7 @@ stage_comebin() {
 
     if [ -z "$assembly_file" ]; then
         log "ERROR: No assembly file found for $sample_name"
+        log "  Checked locations in: $assembly_dir"
         return 1
     fi
 
