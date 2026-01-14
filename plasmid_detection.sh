@@ -17,21 +17,56 @@ else
     source "${SCRIPT_DIR}/00_config_utilities.sh"
 fi
 
-# Get sample info from array task ID
+# Determine mode and get appropriate entity info
 TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
-SAMPLE_INFO=$(get_sample_info_by_index "$TASK_ID")
-if [ -z "$SAMPLE_INFO" ]; then
-    echo "ERROR: No sample found for array index $TASK_ID"
-    exit 1
-fi
 
-# Parse sample information
-IFS='|' read -r SAMPLE_NAME TREATMENT R1_PATH R2_PATH <<< "$SAMPLE_INFO"
-export SAMPLE_NAME TREATMENT
+if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+    # Coassembly mode: process per treatment
+    log "Running in COASSEMBLY mode"
+
+    # Verify treatments file exists
+    if [ ! -f "$TREATMENTS_FILE" ]; then
+        echo "ERROR: Treatments file not found at: $TREATMENTS_FILE"
+        exit 1
+    fi
+
+    # Get treatment from array task ID
+    mapfile -t TREATMENTS_ARRAY < "$TREATMENTS_FILE"
+
+    if [ $TASK_ID -ge ${#TREATMENTS_ARRAY[@]} ]; then
+        echo "No treatment found for array index $TASK_ID"
+        exit 0
+    fi
+
+    TREATMENT="${TREATMENTS_ARRAY[$TASK_ID]}"
+    SAMPLE_NAME="${TREATMENT}"  # Use treatment name as sample name for checkpoints
+    export TREATMENT SAMPLE_NAME
+
+    log "Processing treatment: $TREATMENT"
+else
+    # Individual assembly mode: process per sample
+    log "Running in INDIVIDUAL assembly mode"
+
+    SAMPLE_INFO=$(get_sample_info_by_index "$TASK_ID")
+    if [ -z "$SAMPLE_INFO" ]; then
+        echo "ERROR: No sample found for array index $TASK_ID"
+        exit 1
+    fi
+
+    # Parse sample information
+    IFS='|' read -r SAMPLE_NAME TREATMENT R1_PATH R2_PATH <<< "$SAMPLE_INFO"
+    export SAMPLE_NAME TREATMENT
+
+    log "Processing sample: $SAMPLE_NAME (Treatment: $TREATMENT)"
+fi
 
 # Initialize
 init_conda
-create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
+if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+    create_treatment_dirs "$TREATMENT"
+else
+    create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
+fi
 TEMP_DIR=$(setup_temp_dir)
 
 log "====== Starting Plasmid Detection for $SAMPLE_NAME ($TREATMENT) ======"
@@ -47,45 +82,65 @@ fi
 stage_plasmid_detection() {
     local sample_name="$1"
     local treatment="$2"
-    
+
     log "Running plasmid detection for $sample_name ($treatment)"
-    
-    local assembly_dir="${OUTPUT_DIR}/assembly/${treatment}/${sample_name}"
-    local output_dir="${OUTPUT_DIR}/plasmids/${treatment}/${sample_name}"
-    
+
+    # Determine paths based on assembly mode
+    local assembly_file=""
+    local output_dir=""
+
+    if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+        # Coassembly mode: use treatment-level coassembly
+        local coassembly_dir="${OUTPUT_DIR}/coassembly/${treatment}"
+        output_dir="${OUTPUT_DIR}/plasmids/${treatment}"
+
+        # Check for coassembly contigs
+        if [ -f "${coassembly_dir}/contigs.fasta" ] && [ -s "${coassembly_dir}/contigs.fasta" ]; then
+            assembly_file="${coassembly_dir}/contigs.fasta"
+            log "Found coassembly file: $assembly_file"
+        else
+            log "ERROR: No coassembly found for treatment $treatment"
+            log "  Expected: ${coassembly_dir}/contigs.fasta"
+            return 1
+        fi
+    else
+        # Individual assembly mode: use sample-level assembly
+        local assembly_dir="${OUTPUT_DIR}/assembly/${treatment}/${sample_name}"
+        output_dir="${OUTPUT_DIR}/plasmids/${treatment}/${sample_name}"
+
+        # Try multiple possible names
+        for possible_file in \
+            "${assembly_dir}/contigs.fasta" \
+            "${assembly_dir}/scaffolds.fasta" \
+            "${assembly_dir}/final_contigs.fasta" \
+            "${assembly_dir}/assembly.fasta" \
+            "${assembly_dir}/${sample_name}_contigs.fasta" \
+            "${assembly_dir}/${sample_name}_scaffolds.fasta"; do
+
+            if [ -f "$possible_file" ] && [ -s "$possible_file" ]; then
+                assembly_file="$possible_file"
+                log "Found assembly file: $assembly_file"
+                break
+            fi
+        done
+
+        if [ -z "$assembly_file" ]; then
+            log "ERROR: No assembly found for $sample_name"
+            log "  Checked locations:"
+            log "    ${assembly_dir}/contigs.fasta"
+            log "    ${assembly_dir}/scaffolds.fasta"
+            log "    ${assembly_dir}/final_contigs.fasta"
+            log "    ${assembly_dir}/assembly.fasta"
+            return 1
+        fi
+    fi
+
     mkdir -p "$output_dir"
-    
+
     # Check if already processed
     if [ -f "${output_dir}/plasmids_final.fasta" ] && [ -f "${output_dir}/non_plasmids.fasta" ]; then
-        log "Sample $sample_name already processed, skipping..."
+        log "Already processed, skipping..."
         return 0
-    fi
-    
-    # Check for input assembly - try multiple possible names
-    local assembly_file=""
-    for possible_file in \
-        "${assembly_dir}/contigs.fasta" \
-        "${assembly_dir}/scaffolds.fasta" \
-        "${assembly_dir}/final_contigs.fasta" \
-        "${assembly_dir}/assembly.fasta" \
-        "${assembly_dir}/${sample_name}_contigs.fasta" \
-        "${assembly_dir}/${sample_name}_scaffolds.fasta"; do
-        
-        if [ -f "$possible_file" ] && [ -s "$possible_file" ]; then
-            assembly_file="$possible_file"
-            log "Found assembly file: $assembly_file"
-            break
-        fi
-    done
-    
-    if [ -z "$assembly_file" ]; then
-        log "ERROR: No assembly found for $sample_name"
-        log "  Checked locations:"
-        log "    ${assembly_dir}/contigs.fasta"
-        log "    ${assembly_dir}/scaffolds.fasta"
-        log "    ${assembly_dir}/final_contigs.fasta"
-        log "    ${assembly_dir}/assembly.fasta"
-        return 1
     fi
     
     local num_contigs=$(grep -c "^>" "$assembly_file")
@@ -394,8 +449,15 @@ EOF
 validate_plasmid_detection() {
     local sample_name="$1"
     local treatment="$2"
-    local output_dir="${OUTPUT_DIR}/plasmids/${treatment}/${sample_name}"
-    
+
+    # Determine output directory based on assembly mode
+    local output_dir=""
+    if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+        output_dir="${OUTPUT_DIR}/plasmids/${treatment}"
+    else
+        output_dir="${OUTPUT_DIR}/plasmids/${treatment}/${sample_name}"
+    fi
+
     # Check required output files exist
     if [ -f "${output_dir}/plasmids_final.fasta" ] && [ -f "${output_dir}/non_plasmids.fasta" ]; then
         # Check that non_plasmids.fasta is not empty (should have chromosome contigs)
@@ -403,7 +465,7 @@ validate_plasmid_detection() {
             return 0
         fi
     fi
-    
+
     return 1
 }
 
