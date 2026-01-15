@@ -109,10 +109,14 @@ create_dataset_yaml() {
     cat > "$output_yaml" << EOF
 [
   {
-    type: paired-end,
-    left reads: ["$read1"],
-    right reads: ["$read2"],
-    orientation: fr
+    orientation: "fr",
+    type: "paired-end",
+    right reads: [
+      "$read2"
+    ],
+    left reads: [
+      "$read1"
+    ]
   }
 ]
 EOF
