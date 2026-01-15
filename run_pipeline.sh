@@ -16,6 +16,9 @@ TREATMENT_LEVEL_BINNING=false
 USE_COMEBIN=false  # Use COMEBin for binning instead of MetaWRAP
 USE_SEMIBIN=false  # Use SemiBin2 for binning instead of MetaWRAP
 PER_SAMPLE_CROSS_MAPPING=false  # Map all samples in treatment to each sample's assembly
+USE_BINSPREADER=false  # Use BinSPreader for graph-aware bin refinement
+USE_BINETTE=false  # Use Binette for consensus binning (replaces DAS Tool)
+USE_GUNC=false  # Run GUNC for chimerism detection after CheckM2
 SKIP_MERGE_LANES=true  # Skip lane merging by default (optional stage)
 SKIP_PLASMID_DETECTION=true  # Skip plasmid detection by default (optional stage)
 
@@ -35,6 +38,9 @@ OPTIONS:
     --comebin                     Use COMEBin for binning instead of MetaWRAP (requires comebin conda env)
     --semibin                     Use SemiBin2 for binning instead of MetaWRAP (requires semibin conda env)
     --per-sample-cross-mapping    Map all treatment samples to each sample's assembly (individual mode only)
+    --binspreader                 Use BinSPreader for graph-aware bin refinement (requires assembly graph)
+    --binette                     Use Binette for consensus binning instead of DAS Tool (requires binette env)
+    --gunc                        Run GUNC chimerism detection on final bins (requires gunc env)
     -t, --treatment NAME          Run only for specific treatment/group (can be used multiple times)
     -m, --sample NAME             Run only for specific sample (can be used multiple times)
     -i, --input-dir PATH          Input directory containing FASTQ files
@@ -121,6 +127,24 @@ BINNING MODES:
     - Creates bins using multi-sample coverage information
     - Useful for leveraging cross-sample coverage when you want per-sample assemblies
 
+    Use --binspreader for graph-aware bin refinement:
+    - Refines bins using assembly graph structure from SPAdes
+    - Uses multiple assignment mode (-m) for shared genomic regions
+    - Particularly useful for closely related strains sharing core genes
+    - Runs after initial binning, before consensus/refinement
+
+    Use --binette for consensus binning:
+    - Combines multiple binning results (initial binners + BinSPreader if used)
+    - Replaces DAS Tool with more advanced consensus approach
+    - Uses CheckM2 for quality-guided bin selection
+    - Produces final high-quality bin set
+
+    Use --gunc for chimerism detection:
+    - Detects chimeric bins from contamination or strain mixing
+    - Runs after CheckM2 quality assessment
+    - Flags bins with clade_separation_score > 0.45
+    - Essential QC for closely related community members
+
 EXAMPLES:
     # Run complete pipeline (default: stages 0-9, no lane merge or plasmid detection)
     $0 -i /path/to/fastq -o /path/to/output
@@ -153,6 +177,15 @@ EXAMPLES:
 
     # Per-sample assembly with cross-sample mapping using SemiBin2
     $0 -a individual --semibin --per-sample-cross-mapping \\
+       -i /path/to/fastq -o /path/to/output
+
+    # Advanced binning with graph-aware refinement and consensus
+    $0 --semibin --binspreader --binette --gunc \\
+       -i /path/to/fastq -o /path/to/output
+
+    # Nodule metagenomics: cross-sample mapping + full QC pipeline
+    $0 -a individual --semibin --per-sample-cross-mapping \\
+       --binspreader --binette --gunc \\
        -i /path/to/fastq -o /path/to/output
 
     # Run specific treatment only
@@ -234,6 +267,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --per-sample-cross-mapping)
             PER_SAMPLE_CROSS_MAPPING=true
+            shift
+            ;;
+        --binspreader)
+            USE_BINSPREADER=true
+            shift
+            ;;
+        --binette)
+            USE_BINETTE=true
+            shift
+            ;;
+        --gunc)
+            USE_GUNC=true
             shift
             ;;
         -t|--treatment)
@@ -349,6 +394,9 @@ fi
 export ASSEMBLY_MODE
 export PER_SAMPLE_CROSS_MAPPING
 export USE_SEMIBIN
+export USE_BINSPREADER
+export USE_BINETTE
+export USE_GUNC
 export WORK_DIR="${OUTPUT_DIR}/processing_workdir"
 
 # Source configuration after setting environment variables
@@ -976,6 +1024,9 @@ submit_job() {
     cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING}"
     cmd+=",USE_COMEBIN=${USE_COMEBIN}"
     cmd+=",USE_SEMIBIN=${USE_SEMIBIN}"
+    cmd+=",USE_BINSPREADER=${USE_BINSPREADER}"
+    cmd+=",USE_BINETTE=${USE_BINETTE}"
+    cmd+=",USE_GUNC=${USE_GUNC}"
     cmd+=",PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING}"
     cmd+=",TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE}"
@@ -1167,7 +1218,9 @@ for opt_stage in "${OPTIONAL_STAGES_TO_RUN[@]}"; do
 
     cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
     cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
-    cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},USE_SEMIBIN=${USE_SEMIBIN},PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
+    cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},USE_SEMIBIN=${USE_SEMIBIN}"
+    cmd+=",USE_BINSPREADER=${USE_BINSPREADER},USE_BINETTE=${USE_BINETTE},USE_GUNC=${USE_GUNC}"
+    cmd+=",PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
 
     # Export assembly parameters if set
@@ -1286,7 +1339,9 @@ for stage in "${STAGES_TO_RUN[@]}"; do
         if [ $filtered_count -gt 0 ]; then
             cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
             cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
-            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},USE_SEMIBIN=${USE_SEMIBIN},PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
+            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},USE_SEMIBIN=${USE_SEMIBIN}"
+            cmd+=",USE_BINSPREADER=${USE_BINSPREADER},USE_BINETTE=${USE_BINETTE},USE_GUNC=${USE_GUNC}"
+            cmd+=",PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
             cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
 
             # Export assembly parameters if set
