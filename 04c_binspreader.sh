@@ -227,9 +227,9 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     log "====== Starting BinSPreader for Treatment: $TREATMENT ======"
 
     # Set up directories
-    local binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}"
-    local binspreader_dir="${binning_dir}/binspreader"
-    local assembly_dir="${OUTPUT_DIR}/coassembly/${TREATMENT}"
+    binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}"
+    binspreader_dir="${binning_dir}/binspreader"
+    assembly_dir="${OUTPUT_DIR}/coassembly/${TREATMENT}"
 
     mkdir -p "$binspreader_dir"
 
@@ -241,7 +241,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     fi
 
     # Find assembly graph
-    local assembly_graph=$(find_assembly_graph "$assembly_dir" "$TREATMENT")
+    assembly_graph=$(find_assembly_graph "$assembly_dir" "$TREATMENT")
     if [ -z "$assembly_graph" ]; then
         log "ERROR: Cannot run BinSPreader without assembly graph"
         cleanup_temp_dir "$TEMP_DIR"
@@ -249,7 +249,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     fi
 
     # Find assembly FASTA
-    local assembly_fasta=""
+    assembly_fasta=""
     for possible_file in \
         "${assembly_dir}/contigs.fasta" \
         "${assembly_dir}/scaffolds.fasta" \
@@ -268,7 +268,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     fi
 
     # Find input bins - check multiple possible sources
-    local input_bins_dir=""
+    input_bins_dir=""
     if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
         input_bins_dir="${binning_dir}/comebin/comebin_res_bins"
     elif [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
@@ -284,26 +284,26 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     log "Using bins from: $input_bins_dir"
 
     # Convert bins to TSV
-    local bins_tsv="${TEMP_DIR}/bins_input.tsv"
+    bins_tsv="${TEMP_DIR}/bins_input.tsv"
     if ! bins_fasta_to_tsv "$input_bins_dir" "$bins_tsv"; then
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
 
     # Create dataset.yaml with first sample's reads
-    local dataset_yaml="${TEMP_DIR}/dataset.yaml"
-    local total_samples=$(get_total_samples)
-    local found_reads=false
+    dataset_yaml="${TEMP_DIR}/dataset.yaml"
+    total_samples=$(get_total_samples)
+    found_reads=false
 
     for i in $(seq 0 $((total_samples - 1))); do
-        local sample_info=$(get_sample_info_by_index $i 2>/dev/null)
+        sample_info=$(get_sample_info_by_index $i 2>/dev/null)
         if [ -n "$sample_info" ]; then
             IFS='|' read -r sample_name sample_treatment _ _ <<< "$sample_info"
 
             if [ "$sample_treatment" = "$TREATMENT" ]; then
-                local quality_dir="${OUTPUT_DIR}/quality_filtering/${TREATMENT}/${sample_name}"
-                local read1="${quality_dir}/filtered_1.fastq.gz"
-                local read2="${quality_dir}/filtered_2.fastq.gz"
+                quality_dir="${OUTPUT_DIR}/quality_filtering/${TREATMENT}/${sample_name}"
+                read1="${quality_dir}/filtered_1.fastq.gz"
+                read2="${quality_dir}/filtered_2.fastq.gz"
 
                 if [ -f "$read1" ] && [ -f "$read2" ]; then
                     create_dataset_yaml "$read1" "$read2" "$dataset_yaml"
@@ -315,7 +315,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     done
 
     # Run BinSPreader
-    local binspreader_output="${TEMP_DIR}/binspreader_output"
+    binspreader_output="${TEMP_DIR}/binspreader_output"
     if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
         # Convert output TSV back to FASTA
         if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "${binspreader_dir}/bins"; then
@@ -349,10 +349,10 @@ else
     log "====== Starting BinSPreader for $SAMPLE_NAME ($TREATMENT) ======"
 
     # Set up directories
-    local binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}/${SAMPLE_NAME}"
-    local binspreader_dir="${binning_dir}/binspreader"
-    local assembly_dir="${OUTPUT_DIR}/assembly/${TREATMENT}/${SAMPLE_NAME}"
-    local quality_dir="${OUTPUT_DIR}/quality_filtering/${TREATMENT}/${SAMPLE_NAME}"
+    binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}/${SAMPLE_NAME}"
+    binspreader_dir="${binning_dir}/binspreader"
+    assembly_dir="${OUTPUT_DIR}/assembly/${TREATMENT}/${SAMPLE_NAME}"
+    quality_dir="${OUTPUT_DIR}/quality_filtering/${TREATMENT}/${SAMPLE_NAME}"
 
     mkdir -p "$binspreader_dir"
 
@@ -364,7 +364,7 @@ else
     fi
 
     # Find assembly graph
-    local assembly_graph=$(find_assembly_graph "$assembly_dir" "$SAMPLE_NAME")
+    assembly_graph=$(find_assembly_graph "$assembly_dir" "$SAMPLE_NAME")
     if [ -z "$assembly_graph" ]; then
         log "ERROR: Cannot run BinSPreader without assembly graph"
         cleanup_temp_dir "$TEMP_DIR"
@@ -372,7 +372,7 @@ else
     fi
 
     # Find assembly FASTA
-    local assembly_fasta=""
+    assembly_fasta=""
     for possible_file in \
         "${assembly_dir}/contigs.fasta" \
         "${assembly_dir}/scaffolds.fasta" \
@@ -393,7 +393,7 @@ else
     fi
 
     # Find input bins
-    local input_bins_dir=""
+    input_bins_dir=""
     if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
         input_bins_dir="${binning_dir}/comebin/comebin_res_bins"
     elif [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
@@ -409,16 +409,16 @@ else
     log "Using bins from: $input_bins_dir"
 
     # Convert bins to TSV
-    local bins_tsv="${TEMP_DIR}/bins_input.tsv"
+    bins_tsv="${TEMP_DIR}/bins_input.tsv"
     if ! bins_fasta_to_tsv "$input_bins_dir" "$bins_tsv"; then
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
 
     # Create dataset.yaml with quality-filtered reads
-    local dataset_yaml="${TEMP_DIR}/dataset.yaml"
-    local read1="${quality_dir}/filtered_1.fastq.gz"
-    local read2="${quality_dir}/filtered_2.fastq.gz"
+    dataset_yaml="${TEMP_DIR}/dataset.yaml"
+    read1="${quality_dir}/filtered_1.fastq.gz"
+    read2="${quality_dir}/filtered_2.fastq.gz"
 
     if [ -f "$read1" ] && [ -f "$read2" ]; then
         create_dataset_yaml "$read1" "$read2" "$dataset_yaml"
@@ -428,7 +428,7 @@ else
     fi
 
     # Run BinSPreader
-    local binspreader_output="${TEMP_DIR}/binspreader_output"
+    binspreader_output="${TEMP_DIR}/binspreader_output"
     if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
         # Convert output TSV back to FASTA
         if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "${binspreader_dir}/bins"; then
