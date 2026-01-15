@@ -14,6 +14,7 @@ SPECIFIC_SAMPLES=()
 ASSEMBLY_MODE="individual"
 TREATMENT_LEVEL_BINNING=false
 USE_COMEBIN=false  # Use COMEBin for binning instead of MetaWRAP
+USE_SEMIBIN=false  # Use SemiBin2 for binning instead of MetaWRAP
 PER_SAMPLE_CROSS_MAPPING=false  # Map all samples in treatment to each sample's assembly
 SKIP_MERGE_LANES=true  # Skip lane merging by default (optional stage)
 SKIP_PLASMID_DETECTION=true  # Skip plasmid detection by default (optional stage)
@@ -32,6 +33,7 @@ OPTIONS:
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
     --comebin                     Use COMEBin for binning instead of MetaWRAP (requires comebin conda env)
+    --semibin                     Use SemiBin2 for binning instead of MetaWRAP (requires semibin conda env)
     --per-sample-cross-mapping    Map all treatment samples to each sample's assembly (individual mode only)
     -t, --treatment NAME          Run only for specific treatment/group (can be used multiple times)
     -m, --sample NAME             Run only for specific sample (can be used multiple times)
@@ -107,7 +109,13 @@ BINNING MODES:
     - Uses BAM files from MetaWRAP work_files or creates them with bowtie2
     - Uses 03b_comebin.sh instead of standard binning scripts
 
-    Use --per-sample-cross-mapping with --comebin and -a individual:
+    Use --semibin to use SemiBin2 for binning instead of MetaWRAP:
+    - Uses deep learning with self-supervised learning
+    - Requires 'semibin' conda environment
+    - Creates BAM files with bowtie2 if needed
+    - Uses 03c_semibin.sh instead of standard binning scripts
+
+    Use --per-sample-cross-mapping with --comebin/--semibin and -a individual:
     - Performs individual assembly per sample
     - Maps ALL samples in treatment to EACH sample's assembly
     - Creates bins using multi-sample coverage information
@@ -136,8 +144,15 @@ EXAMPLES:
     # Use COMEBin for binning instead of MetaWRAP
     $0 --comebin -i /path/to/fastq -o /path/to/output
 
+    # Use SemiBin2 for binning instead of MetaWRAP
+    $0 --semibin -i /path/to/fastq -o /path/to/output
+
     # Per-sample assembly with cross-sample mapping (all samples map to each assembly)
     $0 -a individual --comebin --per-sample-cross-mapping \\
+       -i /path/to/fastq -o /path/to/output
+
+    # Per-sample assembly with cross-sample mapping using SemiBin2
+    $0 -a individual --semibin --per-sample-cross-mapping \\
        -i /path/to/fastq -o /path/to/output
 
     # Run specific treatment only
@@ -211,6 +226,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --comebin)
             USE_COMEBIN=true
+            shift
+            ;;
+        --semibin)
+            USE_SEMIBIN=true
             shift
             ;;
         --per-sample-cross-mapping)
@@ -329,6 +348,7 @@ fi
 
 export ASSEMBLY_MODE
 export PER_SAMPLE_CROSS_MAPPING
+export USE_SEMIBIN
 export WORK_DIR="${OUTPUT_DIR}/processing_workdir"
 
 # Source configuration after setting environment variables
@@ -502,6 +522,8 @@ get_assembly_script() {
 get_binning_script() {
     if [ "$USE_COMEBIN" = true ]; then
         echo "03b_comebin.sh"
+    elif [ "$USE_SEMIBIN" = true ]; then
+        echo "03c_semibin.sh"
     elif [ "$TREATMENT_LEVEL_BINNING" = true ]; then
         echo "03_binning_treatment_level.sh"
     else
@@ -527,6 +549,17 @@ if [ "$USE_COMEBIN" = true ]; then
         STAGE_NAMES[3]="Binning (COMEBin - treatment-level)"
     else
         STAGE_NAMES[3]="Binning (COMEBin - sample-level)"
+    fi
+    STAGE_NAMES[4]="Bin Refinement (sample-level)"
+    STAGE_NAMES[5]="Bin Reassembly (sample-level)"
+    STAGE_NAMES[6]="MAGpurify (sample-level)"
+    STAGE_NAMES[7]="CheckM2 (sample-level)"
+    STAGE_NAMES[8]="Bin Selection (sample-level)"
+elif [ "$USE_SEMIBIN" = true ]; then
+    if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+        STAGE_NAMES[3]="Binning (SemiBin2 - treatment-level)"
+    else
+        STAGE_NAMES[3]="Binning (SemiBin2 - sample-level)"
     fi
     STAGE_NAMES[4]="Bin Refinement (sample-level)"
     STAGE_NAMES[5]="Bin Reassembly (sample-level)"
@@ -942,6 +975,7 @@ submit_job() {
     cmd+=",ASSEMBLY_MODE=${ASSEMBLY_MODE}"
     cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING}"
     cmd+=",USE_COMEBIN=${USE_COMEBIN}"
+    cmd+=",USE_SEMIBIN=${USE_SEMIBIN}"
     cmd+=",PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING}"
     cmd+=",TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE}"
@@ -1036,6 +1070,8 @@ echo "Sample sheet: ${SAMPLE_SHEET:-Auto-discovery}"
 echo "Assembly mode: $ASSEMBLY_MODE"
 if [ "$USE_COMEBIN" = true ]; then
     echo "Binning mode: COMEBin"
+elif [ "$USE_SEMIBIN" = true ]; then
+    echo "Binning mode: SemiBin2"
 else
     echo "Binning mode: $([ "$TREATMENT_LEVEL_BINNING" = true ] && echo "treatment-level" || echo "sample-level")"
 fi
@@ -1131,7 +1167,7 @@ for opt_stage in "${OPTIONAL_STAGES_TO_RUN[@]}"; do
 
     cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
     cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
-    cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
+    cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},USE_SEMIBIN=${USE_SEMIBIN},PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
 
     # Export assembly parameters if set
@@ -1250,7 +1286,7 @@ for stage in "${STAGES_TO_RUN[@]}"; do
         if [ $filtered_count -gt 0 ]; then
             cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
             cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
-            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
+            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},USE_SEMIBIN=${USE_SEMIBIN},PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
             cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
 
             # Export assembly parameters if set
