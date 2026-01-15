@@ -579,11 +579,25 @@ get_binning_script() {
     fi
 }
 
+# Function to get the correct refinement script based on flags
+get_refinement_script() {
+    if [ "$USE_BINSPREADER" = true ]; then
+        echo "04c_binspreader.sh"
+    elif [ "$USE_BINETTE" = true ]; then
+        echo "04b_binette.sh"
+    else
+        echo "04_bin_refinement.sh"
+    fi
+}
+
 # Update assembly script based on mode
 STAGE_SCRIPTS[2]=$(get_assembly_script)
 
 # Update binning script based on mode
 STAGE_SCRIPTS[3]=$(get_binning_script)
+
+# Update refinement script based on flags
+STAGE_SCRIPTS[4]=$(get_refinement_script)
 
 # Update stage names to reflect modes
 if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
@@ -628,6 +642,15 @@ else
     STAGE_NAMES[6]="MAGpurify (sample-level)"
     STAGE_NAMES[7]="CheckM2 (sample-level)"
     STAGE_NAMES[8]="Bin Selection (sample-level)"
+fi
+
+# Update stage 4 name based on refinement tool
+if [ "$USE_BINSPREADER" = true ]; then
+    STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - BinSPreader)"
+elif [ "$USE_BINETTE" = true ]; then
+    STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - Binette)"
+else
+    STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - DAS Tool)"
 fi
 
 # Function to check if filters match any samples

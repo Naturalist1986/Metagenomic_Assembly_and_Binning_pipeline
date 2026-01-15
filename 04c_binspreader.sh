@@ -8,8 +8,8 @@
 #SBATCH --time=24:00:00
 #SBATCH --account=ofinkel
 
-# 03d_binspreader.sh - Graph-aware bin refinement using BinSPreader
-# Runs after initial binning to refine bins using assembly graph structure
+# 04c_binspreader.sh - Graph-aware bin refinement using BinSPreader
+# Runs in stage 4 (refinement) after initial binning to refine bins using assembly graph structure
 
 # Source configuration and utilities
 if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
