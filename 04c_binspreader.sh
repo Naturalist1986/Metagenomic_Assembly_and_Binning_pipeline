@@ -140,18 +140,20 @@ run_binspreader() {
     # BinSPreader creates a "tmp" directory in the current working directory
     # Change to parent directory so it has write permissions to create output_dir
     local output_parent=$(dirname "$output_dir")
+    local output_basename=$(basename "$output_dir")
     mkdir -p "$output_parent"
 
     local original_dir=$(pwd)
     cd "$output_parent" || return 1
 
     # Run BinSPreader with multiple assignment mode
+    # Use relative path (basename) since we're in the parent directory
     if [ -n "$dataset_yaml" ] && [ -f "$dataset_yaml" ]; then
         log "Using dataset.yaml for read mapping information"
         "$BINSPREADER" \
             "$assembly_graph" \
             "$bins_tsv" \
-            "$output_dir" \
+            "$output_basename" \
             -m \
             -t ${SLURM_CPUS_PER_TASK:-50} \
             --dataset "$dataset_yaml" \
@@ -161,7 +163,7 @@ run_binspreader() {
         "$BINSPREADER" \
             "$assembly_graph" \
             "$bins_tsv" \
-            "$output_dir" \
+            "$output_basename" \
             -m \
             -t ${SLURM_CPUS_PER_TASK:-50} \
             2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_binspreader.log"
@@ -173,30 +175,14 @@ run_binspreader() {
     cd "$original_dir"
 
     if [ $exit_code -eq 0 ]; then
-        # BinSPreader succeeded, check for output files
-        if [ -f "${output_dir}/bins.tsv" ]; then
-            log "BinSPreader completed successfully - found bins.tsv"
+        # BinSPreader succeeded, check for binning.tsv (BinSPreader's output file)
+        if [ -f "${output_dir}/binning.tsv" ]; then
+            log "BinSPreader completed successfully - found binning.tsv"
             return 0
-        elif [ -d "$output_dir" ] && [ "$(ls -A $output_dir 2>/dev/null)" ]; then
-            log "BinSPreader completed successfully - output directory created"
-            log "Output directory contents:"
-            ls -la "$output_dir" | tee -a "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_binspreader.log"
-            # Check if bins.tsv exists with different naming
-            local tsv_files=$(find "$output_dir" -name "*.tsv" 2>/dev/null)
-            if [ -n "$tsv_files" ]; then
-                log "Found TSV files: $tsv_files"
-                # Use the first TSV file found as bins.tsv
-                local first_tsv=$(echo "$tsv_files" | head -1)
-                if [ "$first_tsv" != "${output_dir}/bins.tsv" ]; then
-                    log "Renaming $first_tsv to bins.tsv"
-                    mv "$first_tsv" "${output_dir}/bins.tsv"
-                fi
-                return 0
-            fi
-            log "WARNING: BinSPreader created output but bins.tsv not found"
-            return 1
         else
-            log "ERROR: BinSPreader exit code 0 but no output created"
+            log "ERROR: BinSPreader exit code 0 but binning.tsv not found"
+            log "Output directory contents:"
+            ls -la "$output_dir" 2>&1 | tee -a "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_binspreader.log"
             return 1
         fi
     else
@@ -349,7 +335,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
             binspreader_output="${TEMP_DIR}/binspreader_comebin"
             if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
                 # Convert output TSV back to FASTA
-                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$comebin_refined"; then
+                if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$comebin_refined"; then
                     log "COMEBin bins refined successfully"
                     refined_any=true
                 else
@@ -379,7 +365,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
             binspreader_output="${TEMP_DIR}/binspreader_semibin"
             if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
                 # Convert output TSV back to FASTA
-                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$semibin_refined"; then
+                if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$semibin_refined"; then
                     log "SemiBin bins refined successfully"
                     refined_any=true
                 else
@@ -409,7 +395,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
             binspreader_output="${TEMP_DIR}/binspreader_metawrap"
             if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
                 # Convert output TSV back to FASTA
-                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$metawrap_refined"; then
+                if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$metawrap_refined"; then
                     log "MetaWRAP bins refined successfully"
                     refined_any=true
                 else
@@ -524,7 +510,7 @@ else
             binspreader_output="${TEMP_DIR}/binspreader_comebin"
             if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
                 # Convert output TSV back to FASTA
-                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$comebin_refined"; then
+                if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$comebin_refined"; then
                     log "COMEBin bins refined successfully"
                     refined_any=true
                 else
@@ -554,7 +540,7 @@ else
             binspreader_output="${TEMP_DIR}/binspreader_semibin"
             if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
                 # Convert output TSV back to FASTA
-                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$semibin_refined"; then
+                if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$semibin_refined"; then
                     log "SemiBin bins refined successfully"
                     refined_any=true
                 else
@@ -584,7 +570,7 @@ else
             binspreader_output="${TEMP_DIR}/binspreader_metawrap"
             if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
                 # Convert output TSV back to FASTA
-                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$metawrap_refined"; then
+                if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$metawrap_refined"; then
                     log "MetaWRAP bins refined successfully"
                     refined_any=true
                 else
