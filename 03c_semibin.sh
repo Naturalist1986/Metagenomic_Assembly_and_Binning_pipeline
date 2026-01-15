@@ -309,9 +309,12 @@ validate_semibin_treatment() {
     local treatment="$1"
     local semibin_dir="${OUTPUT_DIR}/binning/${treatment}/semibin"
 
-    # Check if bins were produced
-    if [ -d "${semibin_dir}/output_bins" ] && [ "$(ls -A ${semibin_dir}/output_bins/*.fa 2>/dev/null)" ]; then
-        return 0
+    # Check if bins were produced (both .fa and .fa.gz)
+    if [ -d "${semibin_dir}/output_bins" ]; then
+        local bin_count=$(ls -1 "${semibin_dir}/output_bins"/*.fa "${semibin_dir}/output_bins"/*.fa.gz 2>/dev/null | wc -l)
+        if [ $bin_count -gt 0 ]; then
+            return 0
+        fi
     fi
 
     return 1
@@ -323,9 +326,12 @@ validate_semibin_sample() {
     local treatment="$2"
     local semibin_dir="${OUTPUT_DIR}/binning/${treatment}/${sample_name}/semibin"
 
-    # Check if bins were produced
-    if [ -d "${semibin_dir}/output_bins" ] && [ "$(ls -A ${semibin_dir}/output_bins/*.fa 2>/dev/null)" ]; then
-        return 0
+    # Check if bins were produced (both .fa and .fa.gz)
+    if [ -d "${semibin_dir}/output_bins" ]; then
+        local bin_count=$(ls -1 "${semibin_dir}/output_bins"/*.fa "${semibin_dir}/output_bins"/*.fa.gz 2>/dev/null | wc -l)
+        if [ $bin_count -gt 0 ]; then
+            return 0
+        fi
     fi
 
     return 1
