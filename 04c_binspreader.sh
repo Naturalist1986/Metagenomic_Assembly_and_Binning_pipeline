@@ -55,13 +55,59 @@ bins_fasta_to_tsv() {
     return 0
 }
 
-# Convert TSV bins back to FASTA format
+# Convert TSV bins back to FASTA format (fast version using seqtk)
 bins_tsv_to_fasta() {
     local input_tsv="$1"
     local assembly_fasta="$2"
     local output_dir="$3"
 
-    log "Converting TSV bins back to FASTA format..."
+    log "Converting TSV bins back to FASTA format using seqtk..."
+
+    mkdir -p "$output_dir"
+
+    # Activate metawrap-env for seqtk
+    activate_env metawrap-env
+
+    # Check if seqtk is available
+    if ! command -v seqtk &> /dev/null; then
+        log "ERROR: seqtk not found in metawrap-env, falling back to slow awk method"
+        conda deactivate
+        bins_tsv_to_fasta_slow "$input_tsv" "$assembly_fasta" "$output_dir"
+        return $?
+    fi
+
+    # Get list of unique bins
+    local bins=($(awk '{print $2}' "$input_tsv" | sort -u))
+    local bin_count=${#bins[@]}
+
+    log "Extracting contigs for $bin_count bins..."
+
+    # For each bin, create a list of contig IDs and extract them with seqtk
+    for bin_name in "${bins[@]}"; do
+        # Create list of contig IDs for this bin
+        local contig_list="${TEMP_DIR}/${bin_name}_contigs.txt"
+        awk -v bin="$bin_name" '$2 == bin {print $1}' "$input_tsv" > "$contig_list"
+
+        # Extract all contigs for this bin in one seqtk call
+        seqtk subseq "$assembly_fasta" "$contig_list" > "${output_dir}/${bin_name}.fa"
+
+        # Clean up temp file
+        rm -f "$contig_list"
+    done
+
+    conda deactivate
+
+    log "Created $bin_count FASTA bins using seqtk (fast method)"
+    return 0
+}
+
+# Fallback slow method (original implementation)
+bins_tsv_to_fasta_slow() {
+    local input_tsv="$1"
+    local assembly_fasta="$2"
+    local output_dir="$3"
+
+    log "Converting TSV bins back to FASTA format (slow awk method)..."
 
     mkdir -p "$output_dir"
 
