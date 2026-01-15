@@ -302,10 +302,39 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
 
     mkdir -p "$binspreader_dir"
 
-    # Check if already processed (check for any refined bin directories)
-    already_done=false
-    if [ -d "${binspreader_dir}/comebin_refined" ] || [ -d "${binspreader_dir}/semibin_refined" ] || [ -d "${binspreader_dir}/metawrap_refined" ]; then
-        log "BinSPreader already completed for treatment $TREATMENT, skipping..."
+    # Check if already processed - only skip if ALL enabled binners have been refined
+    all_refined=true
+
+    if [ "$USE_COMEBIN" = "true" ]; then
+        if [ ! -d "${binspreader_dir}/comebin_refined" ]; then
+            all_refined=false
+            log "COMEBin refinement not found - will refine"
+        else
+            log "COMEBin already refined"
+        fi
+    fi
+
+    if [ "$USE_SEMIBIN" = "true" ]; then
+        if [ ! -d "${binspreader_dir}/semibin_refined" ]; then
+            all_refined=false
+            log "SemiBin refinement not found - will refine"
+        else
+            log "SemiBin already refined"
+        fi
+    fi
+
+    if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ]; then
+        # MetaWRAP mode
+        if [ ! -d "${binspreader_dir}/metawrap_refined" ]; then
+            all_refined=false
+            log "MetaWRAP refinement not found - will refine"
+        else
+            log "MetaWRAP already refined"
+        fi
+    fi
+
+    if [ "$all_refined" = true ]; then
+        log "BinSPreader already completed for treatment $TREATMENT (all enabled binners refined), skipping..."
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
     fi
@@ -488,9 +517,39 @@ else
 
     mkdir -p "$binspreader_dir"
 
-    # Check if already processed (check for any refined bin directories)
-    if [ -d "${binspreader_dir}/comebin_refined" ] || [ -d "${binspreader_dir}/semibin_refined" ] || [ -d "${binspreader_dir}/metawrap_refined" ]; then
-        log "BinSPreader already completed for $SAMPLE_NAME, skipping..."
+    # Check if already processed - only skip if ALL enabled binners have been refined
+    all_refined=true
+
+    if [ "$USE_COMEBIN" = "true" ]; then
+        if [ ! -d "${binspreader_dir}/comebin_refined" ]; then
+            all_refined=false
+            log "COMEBin refinement not found - will refine"
+        else
+            log "COMEBin already refined"
+        fi
+    fi
+
+    if [ "$USE_SEMIBIN" = "true" ]; then
+        if [ ! -d "${binspreader_dir}/semibin_refined" ]; then
+            all_refined=false
+            log "SemiBin refinement not found - will refine"
+        else
+            log "SemiBin already refined"
+        fi
+    fi
+
+    if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ]; then
+        # MetaWRAP mode
+        if [ ! -d "${binspreader_dir}/metawrap_refined" ]; then
+            all_refined=false
+            log "MetaWRAP refinement not found - will refine"
+        else
+            log "MetaWRAP already refined"
+        fi
+    fi
+
+    if [ "$all_refined" = true ]; then
+        log "BinSPreader already completed for $SAMPLE_NAME (all enabled binners refined), skipping..."
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
     fi
