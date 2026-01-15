@@ -137,12 +137,13 @@ run_binspreader() {
     log "Bins TSV: $bins_tsv"
     log "Output directory: $output_dir"
 
-    mkdir -p "$output_dir"
-
     # BinSPreader creates a "tmp" directory in the current working directory
-    # Change to output directory so it has write permissions
+    # Change to parent directory so it has write permissions to create output_dir
+    local output_parent=$(dirname "$output_dir")
+    mkdir -p "$output_parent"
+
     local original_dir=$(pwd)
-    cd "$output_dir" || return 1
+    cd "$output_parent" || return 1
 
     # Run BinSPreader with multiple assignment mode
     if [ -n "$dataset_yaml" ] && [ -f "$dataset_yaml" ]; then
@@ -245,8 +246,9 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
 
     mkdir -p "$binspreader_dir"
 
-    # Check if already processed
-    if [ -d "${binspreader_dir}/bins" ] && [ "$(ls -A ${binspreader_dir}/bins/*.fa 2>/dev/null)" ]; then
+    # Check if already processed (check for any refined bin directories)
+    already_done=false
+    if [ -d "${binspreader_dir}/comebin_refined" ] || [ -d "${binspreader_dir}/semibin_refined" ] || [ -d "${binspreader_dir}/metawrap_refined" ]; then
         log "BinSPreader already completed for treatment $TREATMENT, skipping..."
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
@@ -279,30 +281,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
         exit 1
     fi
 
-    # Find input bins - check multiple possible sources
-    input_bins_dir=""
-    if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-        input_bins_dir="${binning_dir}/comebin/comebin_res_bins"
-    elif [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
-        input_bins_dir="${binning_dir}/semibin/output_bins"
-    elif [ -d "${binning_dir}/metawrap_bins" ]; then
-        input_bins_dir="${binning_dir}/metawrap_bins"
-    else
-        log "ERROR: No input bins found for BinSPreader"
-        cleanup_temp_dir "$TEMP_DIR"
-        exit 1
-    fi
-
-    log "Using bins from: $input_bins_dir"
-
-    # Convert bins to TSV
-    bins_tsv="${TEMP_DIR}/bins_input.tsv"
-    if ! bins_fasta_to_tsv "$input_bins_dir" "$bins_tsv"; then
-        cleanup_temp_dir "$TEMP_DIR"
-        exit 1
-    fi
-
-    # Create dataset.yaml with first sample's reads
+    # Create dataset.yaml with first sample's reads (shared across all refinements)
     dataset_yaml="${TEMP_DIR}/dataset.yaml"
     total_samples=$(get_total_samples)
     found_reads=false
@@ -326,22 +305,107 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
         fi
     done
 
-    # Run BinSPreader
-    binspreader_output="${TEMP_DIR}/binspreader_output"
-    if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
-        # Convert output TSV back to FASTA
-        if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "${binspreader_dir}/bins"; then
-            log "====== BinSPreader completed for treatment $TREATMENT ======"
+    # Refine ALL available bin sets (COMEBin, SemiBin, MetaWRAP)
+    # Each binner gets its own refined output directory
+    refined_any=false
+
+    # Check for COMEBin bins
+    if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+        comebin_bins="${binning_dir}/comebin/comebin_res_bins"
+        comebin_refined="${binspreader_dir}/comebin_refined"
+
+        log "Refining COMEBin bins..."
+        log "Input: $comebin_bins"
+        log "Output: $comebin_refined"
+
+        # Convert bins to TSV
+        bins_tsv="${TEMP_DIR}/comebin_bins.tsv"
+        if bins_fasta_to_tsv "$comebin_bins" "$bins_tsv"; then
+            # Run BinSPreader on COMEBin bins
+            binspreader_output="${TEMP_DIR}/binspreader_comebin"
+            if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
+                # Convert output TSV back to FASTA
+                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$comebin_refined"; then
+                    log "COMEBin bins refined successfully"
+                    refined_any=true
+                else
+                    log "WARNING: Failed to convert COMEBin refined bins to FASTA"
+                fi
+            else
+                log "WARNING: BinSPreader failed on COMEBin bins"
+            fi
         else
-            log "ERROR: Failed to convert bins back to FASTA"
-            cleanup_temp_dir "$TEMP_DIR"
-            exit 1
+            log "WARNING: Failed to convert COMEBin bins to TSV"
         fi
-    else
-        log "ERROR: BinSPreader failed"
+    fi
+
+    # Check for SemiBin bins
+    if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
+        semibin_bins="${binning_dir}/semibin/output_bins"
+        semibin_refined="${binspreader_dir}/semibin_refined"
+
+        log "Refining SemiBin bins..."
+        log "Input: $semibin_bins"
+        log "Output: $semibin_refined"
+
+        # Convert bins to TSV
+        bins_tsv="${TEMP_DIR}/semibin_bins.tsv"
+        if bins_fasta_to_tsv "$semibin_bins" "$bins_tsv"; then
+            # Run BinSPreader on SemiBin bins
+            binspreader_output="${TEMP_DIR}/binspreader_semibin"
+            if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
+                # Convert output TSV back to FASTA
+                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$semibin_refined"; then
+                    log "SemiBin bins refined successfully"
+                    refined_any=true
+                else
+                    log "WARNING: Failed to convert SemiBin refined bins to FASTA"
+                fi
+            else
+                log "WARNING: BinSPreader failed on SemiBin bins"
+            fi
+        else
+            log "WARNING: Failed to convert SemiBin bins to TSV"
+        fi
+    fi
+
+    # Check for MetaWRAP bins (if neither COMEBin nor SemiBin is used)
+    if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ] && [ -d "${binning_dir}/metawrap_bins" ]; then
+        metawrap_bins="${binning_dir}/metawrap_bins"
+        metawrap_refined="${binspreader_dir}/metawrap_refined"
+
+        log "Refining MetaWRAP bins..."
+        log "Input: $metawrap_bins"
+        log "Output: $metawrap_refined"
+
+        # Convert bins to TSV
+        bins_tsv="${TEMP_DIR}/metawrap_bins.tsv"
+        if bins_fasta_to_tsv "$metawrap_bins" "$bins_tsv"; then
+            # Run BinSPreader on MetaWRAP bins
+            binspreader_output="${TEMP_DIR}/binspreader_metawrap"
+            if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
+                # Convert output TSV back to FASTA
+                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$metawrap_refined"; then
+                    log "MetaWRAP bins refined successfully"
+                    refined_any=true
+                else
+                    log "WARNING: Failed to convert MetaWRAP refined bins to FASTA"
+                fi
+            else
+                log "WARNING: BinSPreader failed on MetaWRAP bins"
+            fi
+        else
+            log "WARNING: Failed to convert MetaWRAP bins to TSV"
+        fi
+    fi
+
+    if [ "$refined_any" = false ]; then
+        log "ERROR: BinSPreader failed to refine any bin sets"
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
+
+    log "====== BinSPreader completed for treatment $TREATMENT ======"
 
 else
     # ===== SAMPLE-LEVEL MODE (individual assembly) =====
@@ -368,8 +432,8 @@ else
 
     mkdir -p "$binspreader_dir"
 
-    # Check if already processed
-    if [ -d "${binspreader_dir}/bins" ] && [ "$(ls -A ${binspreader_dir}/bins/*.fa 2>/dev/null)" ]; then
+    # Check if already processed (check for any refined bin directories)
+    if [ -d "${binspreader_dir}/comebin_refined" ] || [ -d "${binspreader_dir}/semibin_refined" ] || [ -d "${binspreader_dir}/metawrap_refined" ]; then
         log "BinSPreader already completed for $SAMPLE_NAME, skipping..."
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
@@ -404,30 +468,7 @@ else
         exit 1
     fi
 
-    # Find input bins
-    input_bins_dir=""
-    if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-        input_bins_dir="${binning_dir}/comebin/comebin_res_bins"
-    elif [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
-        input_bins_dir="${binning_dir}/semibin/output_bins"
-    elif [ -d "${binning_dir}/metawrap_50_10_bins" ]; then
-        input_bins_dir="${binning_dir}/metawrap_50_10_bins"
-    else
-        log "ERROR: No input bins found for BinSPreader"
-        cleanup_temp_dir "$TEMP_DIR"
-        exit 1
-    fi
-
-    log "Using bins from: $input_bins_dir"
-
-    # Convert bins to TSV
-    bins_tsv="${TEMP_DIR}/bins_input.tsv"
-    if ! bins_fasta_to_tsv "$input_bins_dir" "$bins_tsv"; then
-        cleanup_temp_dir "$TEMP_DIR"
-        exit 1
-    fi
-
-    # Create dataset.yaml with quality-filtered reads
+    # Create dataset.yaml with quality-filtered reads (shared across all refinements)
     dataset_yaml="${TEMP_DIR}/dataset.yaml"
     read1="${quality_dir}/filtered_1.fastq.gz"
     read2="${quality_dir}/filtered_2.fastq.gz"
@@ -439,22 +480,107 @@ else
         dataset_yaml=""
     fi
 
-    # Run BinSPreader
-    binspreader_output="${TEMP_DIR}/binspreader_output"
-    if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
-        # Convert output TSV back to FASTA
-        if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "${binspreader_dir}/bins"; then
-            log "====== BinSPreader completed for $SAMPLE_NAME ======"
+    # Refine ALL available bin sets (COMEBin, SemiBin, MetaWRAP)
+    # Each binner gets its own refined output directory
+    refined_any=false
+
+    # Check for COMEBin bins
+    if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+        comebin_bins="${binning_dir}/comebin/comebin_res_bins"
+        comebin_refined="${binspreader_dir}/comebin_refined"
+
+        log "Refining COMEBin bins..."
+        log "Input: $comebin_bins"
+        log "Output: $comebin_refined"
+
+        # Convert bins to TSV
+        bins_tsv="${TEMP_DIR}/comebin_bins.tsv"
+        if bins_fasta_to_tsv "$comebin_bins" "$bins_tsv"; then
+            # Run BinSPreader on COMEBin bins
+            binspreader_output="${TEMP_DIR}/binspreader_comebin"
+            if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
+                # Convert output TSV back to FASTA
+                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$comebin_refined"; then
+                    log "COMEBin bins refined successfully"
+                    refined_any=true
+                else
+                    log "WARNING: Failed to convert COMEBin refined bins to FASTA"
+                fi
+            else
+                log "WARNING: BinSPreader failed on COMEBin bins"
+            fi
         else
-            log "ERROR: Failed to convert bins back to FASTA"
-            cleanup_temp_dir "$TEMP_DIR"
-            exit 1
+            log "WARNING: Failed to convert COMEBin bins to TSV"
         fi
-    else
-        log "ERROR: BinSPreader failed"
+    fi
+
+    # Check for SemiBin bins
+    if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
+        semibin_bins="${binning_dir}/semibin/output_bins"
+        semibin_refined="${binspreader_dir}/semibin_refined"
+
+        log "Refining SemiBin bins..."
+        log "Input: $semibin_bins"
+        log "Output: $semibin_refined"
+
+        # Convert bins to TSV
+        bins_tsv="${TEMP_DIR}/semibin_bins.tsv"
+        if bins_fasta_to_tsv "$semibin_bins" "$bins_tsv"; then
+            # Run BinSPreader on SemiBin bins
+            binspreader_output="${TEMP_DIR}/binspreader_semibin"
+            if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
+                # Convert output TSV back to FASTA
+                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$semibin_refined"; then
+                    log "SemiBin bins refined successfully"
+                    refined_any=true
+                else
+                    log "WARNING: Failed to convert SemiBin refined bins to FASTA"
+                fi
+            else
+                log "WARNING: BinSPreader failed on SemiBin bins"
+            fi
+        else
+            log "WARNING: Failed to convert SemiBin bins to TSV"
+        fi
+    fi
+
+    # Check for MetaWRAP bins (if neither COMEBin nor SemiBin is used)
+    if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ] && [ -d "${binning_dir}/metawrap_50_10_bins" ]; then
+        metawrap_bins="${binning_dir}/metawrap_50_10_bins"
+        metawrap_refined="${binspreader_dir}/metawrap_refined"
+
+        log "Refining MetaWRAP bins..."
+        log "Input: $metawrap_bins"
+        log "Output: $metawrap_refined"
+
+        # Convert bins to TSV
+        bins_tsv="${TEMP_DIR}/metawrap_bins.tsv"
+        if bins_fasta_to_tsv "$metawrap_bins" "$bins_tsv"; then
+            # Run BinSPreader on MetaWRAP bins
+            binspreader_output="${TEMP_DIR}/binspreader_metawrap"
+            if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
+                # Convert output TSV back to FASTA
+                if bins_tsv_to_fasta "${binspreader_output}/bins.tsv" "$assembly_fasta" "$metawrap_refined"; then
+                    log "MetaWRAP bins refined successfully"
+                    refined_any=true
+                else
+                    log "WARNING: Failed to convert MetaWRAP refined bins to FASTA"
+                fi
+            else
+                log "WARNING: BinSPreader failed on MetaWRAP bins"
+            fi
+        else
+            log "WARNING: Failed to convert MetaWRAP bins to TSV"
+        fi
+    fi
+
+    if [ "$refined_any" = false ]; then
+        log "ERROR: BinSPreader failed to refine any bin sets"
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
+
+    log "====== BinSPreader completed for $SAMPLE_NAME ======"
 fi
 
 # Cleanup
