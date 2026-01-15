@@ -371,6 +371,16 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
             return 0
         fi
 
+        # Clean up partial/failed COMEBin runs to avoid FileExistsError
+        if [ -d "${comebin_dir}/data_augmentation" ]; then
+            log "Removing existing data_augmentation directory from previous run..."
+            rm -rf "${comebin_dir}/data_augmentation"
+        fi
+        if [ -d "${comebin_dir}/intermediate_result" ]; then
+            log "Removing existing intermediate_result directory from previous run..."
+            rm -rf "${comebin_dir}/intermediate_result"
+        fi
+
         # Check for assembly
         local assembly_file=""
         for possible_file in \
@@ -411,7 +421,9 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
 
         # Setup BAM files directory
         local bam_dir="${TEMP_DIR}/bam_files"
+        local persistent_bam_dir="${comebin_dir}/bam_files"
         mkdir -p "$bam_dir"
+        mkdir -p "$persistent_bam_dir"
 
         # Get all samples in this treatment and create BAM files for each
         log "Finding all samples in treatment $treatment..."
@@ -425,6 +437,17 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
 
                 if [ "$sample_treatment" = "$treatment" ]; then
                     log "Processing sample: $sample_name"
+
+                    # Check if BAM already exists in persistent directory
+                    if [ -f "${persistent_bam_dir}/${sample_name}.sorted.bam" ] && \
+                       [ -f "${persistent_bam_dir}/${sample_name}.sorted.bam.bai" ]; then
+                        log "Found existing BAM for $sample_name, reusing..."
+                        ln -sf "${persistent_bam_dir}/${sample_name}.sorted.bam" "${bam_dir}/${sample_name}.sorted.bam"
+                        ln -sf "${persistent_bam_dir}/${sample_name}.sorted.bam.bai" "${bam_dir}/${sample_name}.sorted.bam.bai"
+                        ((sample_count++))
+                        continue
+                    fi
+
                     local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample_name}"
                     local read1="${quality_dir}/filtered_1.fastq.gz"
                     local read2="${quality_dir}/filtered_2.fastq.gz"
@@ -436,6 +459,9 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
 
                     # Create BAM file for this sample
                     if create_bam_files_treatment "$filtered_assembly" "$read1" "$read2" "$bam_dir" "$sample_name"; then
+                        # Copy to persistent directory
+                        cp "${bam_dir}/${sample_name}.sorted.bam" "${persistent_bam_dir}/"
+                        cp "${bam_dir}/${sample_name}.sorted.bam.bai" "${persistent_bam_dir}/"
                         ((sample_count++))
                         log "Successfully created BAM for $sample_name ($sample_count total)"
                     else
@@ -450,7 +476,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
             return 1
         fi
 
-        log "Created BAM files for $sample_count samples in treatment $treatment"
+        log "Using BAM files from $sample_count samples in treatment $treatment"
 
         # Run COMEBin
         if run_comebin "$filtered_assembly" "$bam_dir" "$comebin_dir" "$treatment"; then
@@ -523,6 +549,16 @@ else
             return 0
         fi
 
+        # Clean up partial/failed COMEBin runs to avoid FileExistsError
+        if [ -d "${comebin_dir}/data_augmentation" ]; then
+            log "Removing existing data_augmentation directory from previous run..."
+            rm -rf "${comebin_dir}/data_augmentation"
+        fi
+        if [ -d "${comebin_dir}/intermediate_result" ]; then
+            log "Removing existing intermediate_result directory from previous run..."
+            rm -rf "${comebin_dir}/intermediate_result"
+        fi
+
         # Check for input files - assembly
         local assembly_file=""
         for possible_file in \
@@ -575,7 +611,9 @@ else
 
         # Setup BAM files directory
         local bam_dir="${TEMP_DIR}/bam_files"
+        local persistent_bam_dir="${comebin_dir}/bam_files"
         mkdir -p "$bam_dir"
+        mkdir -p "$persistent_bam_dir"
 
         # Check if per-sample cross-mapping is enabled
         if [ "${PER_SAMPLE_CROSS_MAPPING}" = "true" ]; then
@@ -593,6 +631,17 @@ else
 
                     if [ "$other_treatment" = "$treatment" ]; then
                         log "Processing sample: $other_sample_name"
+
+                        # Check if BAM already exists in persistent directory
+                        if [ -f "${persistent_bam_dir}/${other_sample_name}.sorted.bam" ] && \
+                           [ -f "${persistent_bam_dir}/${other_sample_name}.sorted.bam.bai" ]; then
+                            log "Found existing BAM for $other_sample_name, reusing..."
+                            ln -sf "${persistent_bam_dir}/${other_sample_name}.sorted.bam" "${bam_dir}/${other_sample_name}.sorted.bam"
+                            ln -sf "${persistent_bam_dir}/${other_sample_name}.sorted.bam.bai" "${bam_dir}/${other_sample_name}.sorted.bam.bai"
+                            ((sample_count++))
+                            continue
+                        fi
+
                         local other_quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${other_sample_name}"
                         local other_read1="${other_quality_dir}/filtered_1.fastq.gz"
                         local other_read2="${other_quality_dir}/filtered_2.fastq.gz"
@@ -604,6 +653,9 @@ else
 
                         # Create BAM file for this sample mapping to current sample's assembly
                         if create_bam_files_sample "$filtered_assembly" "$other_read1" "$other_read2" "$bam_dir" "$other_sample_name"; then
+                            # Copy to persistent directory
+                            cp "${bam_dir}/${other_sample_name}.sorted.bam" "${persistent_bam_dir}/"
+                            cp "${bam_dir}/${other_sample_name}.sorted.bam.bai" "${persistent_bam_dir}/"
                             ((sample_count++))
                             log "Successfully created BAM for $other_sample_name ($sample_count total)"
                         else
