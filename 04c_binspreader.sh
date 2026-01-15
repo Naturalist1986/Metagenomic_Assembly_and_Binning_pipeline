@@ -395,32 +395,42 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     refined_any=false
 
     # Check for COMEBin bins
-    if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-        comebin_bins="${binning_dir}/comebin/comebin_res_bins"
-        comebin_refined="${binspreader_dir}/comebin_refined"
+    if [ "$USE_COMEBIN" = "true" ]; then
+        # Try the correct COMEBin output structure first
+        if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+            comebin_bins="${binning_dir}/comebin/comebin_res/comebin_res_bins"
+        elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+            comebin_bins="${binning_dir}/comebin/comebin_res_bins"
+        else
+            comebin_bins=""
+        fi
 
-        log "Refining COMEBin bins..."
-        log "Input: $comebin_bins"
-        log "Output: $comebin_refined"
+        if [ -n "$comebin_bins" ]; then
+            comebin_refined="${binspreader_dir}/comebin_refined"
 
-        # Convert bins to TSV
-        bins_tsv="${TEMP_DIR}/comebin_bins.tsv"
-        if bins_fasta_to_tsv "$comebin_bins" "$bins_tsv"; then
-            # Run BinSPreader on COMEBin bins
-            binspreader_output="${TEMP_DIR}/binspreader_comebin"
-            if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
-                # Convert output TSV back to FASTA
-                if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$comebin_refined"; then
-                    log "COMEBin bins refined successfully"
-                    refined_any=true
+            log "Refining COMEBin bins..."
+            log "Input: $comebin_bins"
+            log "Output: $comebin_refined"
+
+            # Convert bins to TSV
+            bins_tsv="${TEMP_DIR}/comebin_bins.tsv"
+            if bins_fasta_to_tsv "$comebin_bins" "$bins_tsv"; then
+                # Run BinSPreader on COMEBin bins
+                binspreader_output="${TEMP_DIR}/binspreader_comebin"
+                if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
+                    # Convert output TSV back to FASTA
+                    if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$comebin_refined"; then
+                        log "COMEBin bins refined successfully"
+                        refined_any=true
+                    else
+                        log "WARNING: Failed to convert COMEBin refined bins to FASTA"
+                    fi
                 else
-                    log "WARNING: Failed to convert COMEBin refined bins to FASTA"
+                    log "WARNING: BinSPreader failed on COMEBin bins"
                 fi
             else
-                log "WARNING: BinSPreader failed on COMEBin bins"
+                log "WARNING: Failed to convert COMEBin bins to TSV"
             fi
-        else
-            log "WARNING: Failed to convert COMEBin bins to TSV"
         fi
     fi
 
@@ -600,32 +610,42 @@ else
     refined_any=false
 
     # Check for COMEBin bins
-    if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-        comebin_bins="${binning_dir}/comebin/comebin_res_bins"
-        comebin_refined="${binspreader_dir}/comebin_refined"
+    if [ "$USE_COMEBIN" = "true" ]; then
+        # Try the correct COMEBin output structure first
+        if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+            comebin_bins="${binning_dir}/comebin/comebin_res/comebin_res_bins"
+        elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+            comebin_bins="${binning_dir}/comebin/comebin_res_bins"
+        else
+            comebin_bins=""
+        fi
 
-        log "Refining COMEBin bins..."
-        log "Input: $comebin_bins"
-        log "Output: $comebin_refined"
+        if [ -n "$comebin_bins" ]; then
+            comebin_refined="${binspreader_dir}/comebin_refined"
 
-        # Convert bins to TSV
-        bins_tsv="${TEMP_DIR}/comebin_bins.tsv"
-        if bins_fasta_to_tsv "$comebin_bins" "$bins_tsv"; then
-            # Run BinSPreader on COMEBin bins
-            binspreader_output="${TEMP_DIR}/binspreader_comebin"
-            if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
-                # Convert output TSV back to FASTA
-                if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$comebin_refined"; then
-                    log "COMEBin bins refined successfully"
-                    refined_any=true
+            log "Refining COMEBin bins..."
+            log "Input: $comebin_bins"
+            log "Output: $comebin_refined"
+
+            # Convert bins to TSV
+            bins_tsv="${TEMP_DIR}/comebin_bins.tsv"
+            if bins_fasta_to_tsv "$comebin_bins" "$bins_tsv"; then
+                # Run BinSPreader on COMEBin bins
+                binspreader_output="${TEMP_DIR}/binspreader_comebin"
+                if run_binspreader "$assembly_graph" "$bins_tsv" "$binspreader_output" "$dataset_yaml"; then
+                    # Convert output TSV back to FASTA
+                    if bins_tsv_to_fasta "${binspreader_output}/binning.tsv" "$assembly_fasta" "$comebin_refined"; then
+                        log "COMEBin bins refined successfully"
+                        refined_any=true
+                    else
+                        log "WARNING: Failed to convert COMEBin refined bins to FASTA"
+                    fi
                 else
-                    log "WARNING: Failed to convert COMEBin refined bins to FASTA"
+                    log "WARNING: BinSPreader failed on COMEBin bins"
                 fi
             else
-                log "WARNING: BinSPreader failed on COMEBin bins"
+                log "WARNING: Failed to convert COMEBin bins to TSV"
             fi
-        else
-            log "WARNING: Failed to convert COMEBin bins to TSV"
         fi
     fi
 
