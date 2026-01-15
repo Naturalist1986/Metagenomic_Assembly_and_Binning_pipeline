@@ -433,10 +433,12 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
             return 1
         fi
 
-        # Setup BAM files directory
+        # Setup BAM files directory - use shared location for all binning tools
         local bam_dir="${TEMP_DIR}/bam_files"
-        local persistent_bam_dir="${semibin_dir}/bam_files"
+        local shared_bam_dir="${binning_dir}/shared_bam_files"  # Shared across COMEBin/SemiBin/etc
+        local persistent_bam_dir="${semibin_dir}/bam_files"      # SemiBin-specific backup
         mkdir -p "$bam_dir"
+        mkdir -p "$shared_bam_dir"
         mkdir -p "$persistent_bam_dir"
 
         # Get all samples in this treatment and create BAM files for each
@@ -452,10 +454,17 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
                 if [ "$sample_treatment" = "$treatment" ]; then
                     log "Processing sample: $sample_name"
 
-                    # Check if BAM already exists in persistent directory
-                    if [ -f "${persistent_bam_dir}/${sample_name}.sorted.bam" ] && \
-                       [ -f "${persistent_bam_dir}/${sample_name}.sorted.bam.bai" ]; then
-                        log "Found existing BAM for $sample_name, reusing..."
+                    # Check if BAM already exists (shared location first, then tool-specific)
+                    if [ -f "${shared_bam_dir}/${sample_name}.sorted.bam" ] && \
+                       [ -f "${shared_bam_dir}/${sample_name}.sorted.bam.bai" ]; then
+                        log "Found existing BAM for $sample_name in shared directory, reusing..."
+                        ln -sf "${shared_bam_dir}/${sample_name}.sorted.bam" "${bam_dir}/${sample_name}.sorted.bam"
+                        ln -sf "${shared_bam_dir}/${sample_name}.sorted.bam.bai" "${bam_dir}/${sample_name}.sorted.bam.bai"
+                        ((sample_count++))
+                        continue
+                    elif [ -f "${persistent_bam_dir}/${sample_name}.sorted.bam" ] && \
+                         [ -f "${persistent_bam_dir}/${sample_name}.sorted.bam.bai" ]; then
+                        log "Found existing BAM for $sample_name in SemiBin directory, reusing..."
                         ln -sf "${persistent_bam_dir}/${sample_name}.sorted.bam" "${bam_dir}/${sample_name}.sorted.bam"
                         ln -sf "${persistent_bam_dir}/${sample_name}.sorted.bam.bai" "${bam_dir}/${sample_name}.sorted.bam.bai"
                         ((sample_count++))
@@ -473,7 +482,9 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
 
                     # Create BAM file for this sample
                     if create_bam_files_treatment "$filtered_assembly" "$read1" "$read2" "$bam_dir" "$sample_name"; then
-                        # Copy to persistent directory
+                        # Copy to shared directory (primary) and tool-specific directory (backup)
+                        cp "${bam_dir}/${sample_name}.sorted.bam" "${shared_bam_dir}/"
+                        cp "${bam_dir}/${sample_name}.sorted.bam.bai" "${shared_bam_dir}/"
                         cp "${bam_dir}/${sample_name}.sorted.bam" "${persistent_bam_dir}/"
                         cp "${bam_dir}/${sample_name}.sorted.bam.bai" "${persistent_bam_dir}/"
                         ((sample_count++))
@@ -623,10 +634,12 @@ else
             return 1
         fi
 
-        # Setup BAM files directory
+        # Setup BAM files directory - use shared location for all binning tools
         local bam_dir="${TEMP_DIR}/bam_files"
-        local persistent_bam_dir="${semibin_dir}/bam_files"
+        local shared_bam_dir="${binning_dir}/shared_bam_files"  # Shared across COMEBin/SemiBin/etc
+        local persistent_bam_dir="${semibin_dir}/bam_files"      # SemiBin-specific backup
         mkdir -p "$bam_dir"
+        mkdir -p "$shared_bam_dir"
         mkdir -p "$persistent_bam_dir"
 
         # Check if per-sample cross-mapping is enabled
@@ -646,10 +659,17 @@ else
                     if [ "$other_treatment" = "$treatment" ]; then
                         log "Processing sample: $other_sample_name"
 
-                        # Check if BAM already exists in persistent directory
-                        if [ -f "${persistent_bam_dir}/${other_sample_name}.sorted.bam" ] && \
-                           [ -f "${persistent_bam_dir}/${other_sample_name}.sorted.bam.bai" ]; then
-                            log "Found existing BAM for $other_sample_name, reusing..."
+                        # Check if BAM already exists (shared location first, then tool-specific)
+                        if [ -f "${shared_bam_dir}/${other_sample_name}.sorted.bam" ] && \
+                           [ -f "${shared_bam_dir}/${other_sample_name}.sorted.bam.bai" ]; then
+                            log "Found existing BAM for $other_sample_name in shared directory, reusing..."
+                            ln -sf "${shared_bam_dir}/${other_sample_name}.sorted.bam" "${bam_dir}/${other_sample_name}.sorted.bam"
+                            ln -sf "${shared_bam_dir}/${other_sample_name}.sorted.bam.bai" "${bam_dir}/${other_sample_name}.sorted.bam.bai"
+                            ((sample_count++))
+                            continue
+                        elif [ -f "${persistent_bam_dir}/${other_sample_name}.sorted.bam" ] && \
+                             [ -f "${persistent_bam_dir}/${other_sample_name}.sorted.bam.bai" ]; then
+                            log "Found existing BAM for $other_sample_name in SemiBin directory, reusing..."
                             ln -sf "${persistent_bam_dir}/${other_sample_name}.sorted.bam" "${bam_dir}/${other_sample_name}.sorted.bam"
                             ln -sf "${persistent_bam_dir}/${other_sample_name}.sorted.bam.bai" "${bam_dir}/${other_sample_name}.sorted.bam.bai"
                             ((sample_count++))
@@ -667,7 +687,9 @@ else
 
                         # Create BAM file for this sample mapping to current sample's assembly
                         if create_bam_files_sample "$filtered_assembly" "$other_read1" "$other_read2" "$bam_dir" "$other_sample_name"; then
-                            # Copy to persistent directory
+                            # Copy to shared directory (primary) and tool-specific directory (backup)
+                            cp "${bam_dir}/${other_sample_name}.sorted.bam" "${shared_bam_dir}/"
+                            cp "${bam_dir}/${other_sample_name}.sorted.bam.bai" "${shared_bam_dir}/"
                             cp "${bam_dir}/${other_sample_name}.sorted.bam" "${persistent_bam_dir}/"
                             cp "${bam_dir}/${other_sample_name}.sorted.bam.bai" "${persistent_bam_dir}/"
                             ((sample_count++))
