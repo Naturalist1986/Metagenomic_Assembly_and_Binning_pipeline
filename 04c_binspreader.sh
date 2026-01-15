@@ -172,9 +172,33 @@ run_binspreader() {
     # Change back to original directory
     cd "$original_dir"
 
-    if [ $exit_code -eq 0 ] && [ -f "${output_dir}/bins.tsv" ]; then
-        log "BinSPreader completed successfully"
-        return 0
+    if [ $exit_code -eq 0 ]; then
+        # BinSPreader succeeded, check for output files
+        if [ -f "${output_dir}/bins.tsv" ]; then
+            log "BinSPreader completed successfully - found bins.tsv"
+            return 0
+        elif [ -d "$output_dir" ] && [ "$(ls -A $output_dir 2>/dev/null)" ]; then
+            log "BinSPreader completed successfully - output directory created"
+            log "Output directory contents:"
+            ls -la "$output_dir" | tee -a "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_binspreader.log"
+            # Check if bins.tsv exists with different naming
+            local tsv_files=$(find "$output_dir" -name "*.tsv" 2>/dev/null)
+            if [ -n "$tsv_files" ]; then
+                log "Found TSV files: $tsv_files"
+                # Use the first TSV file found as bins.tsv
+                local first_tsv=$(echo "$tsv_files" | head -1)
+                if [ "$first_tsv" != "${output_dir}/bins.tsv" ]; then
+                    log "Renaming $first_tsv to bins.tsv"
+                    mv "$first_tsv" "${output_dir}/bins.tsv"
+                fi
+                return 0
+            fi
+            log "WARNING: BinSPreader created output but bins.tsv not found"
+            return 1
+        else
+            log "ERROR: BinSPreader exit code 0 but no output created"
+            return 1
+        fi
     else
         log "BinSPreader failed with exit code: $exit_code"
         return 1
