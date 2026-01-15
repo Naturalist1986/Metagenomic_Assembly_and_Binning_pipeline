@@ -14,6 +14,7 @@ SPECIFIC_SAMPLES=()
 ASSEMBLY_MODE="individual"
 TREATMENT_LEVEL_BINNING=false
 USE_COMEBIN=false  # Use COMEBin for binning instead of MetaWRAP
+PER_SAMPLE_CROSS_MAPPING=false  # Map all samples in treatment to each sample's assembly
 SKIP_MERGE_LANES=true  # Skip lane merging by default (optional stage)
 SKIP_PLASMID_DETECTION=true  # Skip plasmid detection by default (optional stage)
 
@@ -31,6 +32,7 @@ OPTIONS:
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
     --comebin                     Use COMEBin for binning instead of MetaWRAP (requires comebin conda env)
+    --per-sample-cross-mapping    Map all treatment samples to each sample's assembly (individual mode only)
     -t, --treatment NAME          Run only for specific treatment/group (can be used multiple times)
     -m, --sample NAME             Run only for specific sample (can be used multiple times)
     -i, --input-dir PATH          Input directory containing FASTQ files
@@ -105,6 +107,12 @@ BINNING MODES:
     - Uses BAM files from MetaWRAP work_files or creates them with bowtie2
     - Uses 03b_comebin.sh instead of standard binning scripts
 
+    Use --per-sample-cross-mapping with --comebin and -a individual:
+    - Performs individual assembly per sample
+    - Maps ALL samples in treatment to EACH sample's assembly
+    - Creates bins using multi-sample coverage information
+    - Useful for leveraging cross-sample coverage when you want per-sample assemblies
+
 EXAMPLES:
     # Run complete pipeline (default: stages 0-9, no lane merge or plasmid detection)
     $0 -i /path/to/fastq -o /path/to/output
@@ -127,6 +135,10 @@ EXAMPLES:
 
     # Use COMEBin for binning instead of MetaWRAP
     $0 --comebin -i /path/to/fastq -o /path/to/output
+
+    # Per-sample assembly with cross-sample mapping (all samples map to each assembly)
+    $0 -a individual --comebin --per-sample-cross-mapping \\
+       -i /path/to/fastq -o /path/to/output
 
     # Run specific treatment only
     $0 --treatment control -i /path/to/fastq -o /path/to/output
@@ -199,6 +211,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --comebin)
             USE_COMEBIN=true
+            shift
+            ;;
+        --per-sample-cross-mapping)
+            PER_SAMPLE_CROSS_MAPPING=true
             shift
             ;;
         -t|--treatment)
@@ -312,6 +328,7 @@ if [ -n "$BIN_REASSEMBLY_MEMORY_ARG" ]; then
 fi
 
 export ASSEMBLY_MODE
+export PER_SAMPLE_CROSS_MAPPING
 export WORK_DIR="${OUTPUT_DIR}/processing_workdir"
 
 # Source configuration after setting environment variables
@@ -925,6 +942,7 @@ submit_job() {
     cmd+=",ASSEMBLY_MODE=${ASSEMBLY_MODE}"
     cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING}"
     cmd+=",USE_COMEBIN=${USE_COMEBIN}"
+    cmd+=",PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING}"
     cmd+=",TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE}"
     cmd+=",SLURM_ACCOUNT=${SLURM_ACCOUNT}"
@@ -1113,7 +1131,7 @@ for opt_stage in "${OPTIONAL_STAGES_TO_RUN[@]}"; do
 
     cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
     cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
-    cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},TREATMENTS_FILE=${TREATMENTS_FILE}"
+    cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
     cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
 
     # Export assembly parameters if set
@@ -1232,7 +1250,7 @@ for stage in "${STAGES_TO_RUN[@]}"; do
         if [ $filtered_count -gt 0 ]; then
             cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
             cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
-            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},TREATMENTS_FILE=${TREATMENTS_FILE}"
+            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
             cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
 
             # Export assembly parameters if set

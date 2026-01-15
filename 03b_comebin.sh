@@ -245,7 +245,13 @@ create_comebin_summary_sample() {
     local sample_name="$1"
     local treatment="$2"
     local comebin_dir="$3"
+    local sample_count="${4:-1}"  # Optional: number of samples mapped (default 1)
     local summary_file="${comebin_dir}/comebin_summary.txt"
+
+    local mode_desc="Sample-level (individual assembly)"
+    if [ "$sample_count" -gt 1 ]; then
+        mode_desc="Sample-level (individual assembly with cross-sample mapping)"
+    fi
 
     cat > "$summary_file" << EOF
 COMEBin Binning Summary for $sample_name
@@ -254,7 +260,8 @@ COMEBin Binning Summary for $sample_name
 Date: $(date)
 Sample: $sample_name
 Treatment: $treatment
-Mode: Sample-level (individual assembly)
+Mode: $mode_desc
+Samples mapped: $sample_count
 Tool: COMEBin
 
 Results:
@@ -570,37 +577,88 @@ else
         local bam_dir="${TEMP_DIR}/bam_files"
         mkdir -p "$bam_dir"
 
-        # Check if BAM files exist from MetaWRAP
-        local metawrap_bam=""
-        if [ -d "${metawrap_binning_dir}/work_files" ]; then
-            # Look for sorted BAM file from MetaWRAP
-            for bam_file in "${metawrap_binning_dir}/work_files"/*.bam; do
-                if [ -f "$bam_file" ] && [[ "$bam_file" == *"sorted"* ]]; then
-                    metawrap_bam="$bam_file"
-                    log "Found MetaWRAP BAM file: $metawrap_bam"
-                    break
+        # Check if per-sample cross-mapping is enabled
+        if [ "${PER_SAMPLE_CROSS_MAPPING}" = "true" ]; then
+            log "Per-sample cross-mapping enabled: mapping all samples in treatment to this assembly"
+
+            # Get all samples in this treatment and create BAM files for each
+            log "Finding all samples in treatment $treatment..."
+            local total_samples=$(get_total_samples)
+            local sample_count=0
+
+            for i in $(seq 0 $((total_samples - 1))); do
+                local other_sample_info=$(get_sample_info_by_index $i 2>/dev/null)
+                if [ -n "$other_sample_info" ]; then
+                    IFS='|' read -r other_sample_name other_treatment _ _ <<< "$other_sample_info"
+
+                    if [ "$other_treatment" = "$treatment" ]; then
+                        log "Processing sample: $other_sample_name"
+                        local other_quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${other_sample_name}"
+                        local other_read1="${other_quality_dir}/filtered_1.fastq.gz"
+                        local other_read2="${other_quality_dir}/filtered_2.fastq.gz"
+
+                        if [ ! -f "$other_read1" ] || [ ! -f "$other_read2" ]; then
+                            log "WARNING: Missing reads for $other_sample_name, skipping"
+                            continue
+                        fi
+
+                        # Create BAM file for this sample mapping to current sample's assembly
+                        if create_bam_files_sample "$filtered_assembly" "$other_read1" "$other_read2" "$bam_dir" "$other_sample_name"; then
+                            ((sample_count++))
+                            log "Successfully created BAM for $other_sample_name ($sample_count total)"
+                        else
+                            log "WARNING: Failed to create BAM for $other_sample_name"
+                        fi
+                    fi
                 fi
             done
-        fi
 
-        if [ -n "$metawrap_bam" ] && [ -f "$metawrap_bam" ]; then
-            # Use existing BAM from MetaWRAP
-            log "Using existing BAM file from MetaWRAP"
-            ln -s "$metawrap_bam" "${bam_dir}/${sample_name}.sorted.bam"
-        else
-            # Create BAM files using bowtie2
-            log "Creating BAM files for COMEBin..."
-
-            if ! create_bam_files_sample "$filtered_assembly" "$read1" "$read2" "$bam_dir" "$sample_name"; then
-                log "ERROR: Failed to create BAM files"
+            if [ $sample_count -eq 0 ]; then
+                log "ERROR: No BAM files created for treatment $treatment"
                 return 1
+            fi
+
+            log "Created BAM files for $sample_count samples in treatment $treatment"
+
+        else
+            # Original behavior: single-sample mapping
+            # Check if BAM files exist from MetaWRAP
+            local metawrap_bam=""
+            if [ -d "${metawrap_binning_dir}/work_files" ]; then
+                # Look for sorted BAM file from MetaWRAP
+                for bam_file in "${metawrap_binning_dir}/work_files"/*.bam; do
+                    if [ -f "$bam_file" ] && [[ "$bam_file" == *"sorted"* ]]; then
+                        metawrap_bam="$bam_file"
+                        log "Found MetaWRAP BAM file: $metawrap_bam"
+                        break
+                    fi
+                done
+            fi
+
+            if [ -n "$metawrap_bam" ] && [ -f "$metawrap_bam" ]; then
+                # Use existing BAM from MetaWRAP
+                log "Using existing BAM file from MetaWRAP"
+                ln -s "$metawrap_bam" "${bam_dir}/${sample_name}.sorted.bam"
+            else
+                # Create BAM files using bowtie2
+                log "Creating BAM files for COMEBin..."
+
+                if ! create_bam_files_sample "$filtered_assembly" "$read1" "$read2" "$bam_dir" "$sample_name"; then
+                    log "ERROR: Failed to create BAM files"
+                    return 1
+                fi
             fi
         fi
 
         # Run COMEBin
         if run_comebin "$filtered_assembly" "$bam_dir" "$comebin_dir" "$sample_name"; then
             log "COMEBin binning completed successfully"
-            create_comebin_summary_sample "$sample_name" "$treatment" "$comebin_dir"
+            # Pass sample count if cross-mapping was used
+            if [ "${PER_SAMPLE_CROSS_MAPPING}" = "true" ]; then
+                create_comebin_summary_sample "$sample_name" "$treatment" "$comebin_dir" "$sample_count"
+            else
+                create_comebin_summary_sample "$sample_name" "$treatment" "$comebin_dir"
+            fi
             return 0
         else
             log "ERROR: COMEBin binning failed for $sample_name"
