@@ -202,6 +202,18 @@ run_semibin() {
 
     # Check results
     if [ $exit_code -eq 0 ] && [ -d "${output_dir}/output_bins" ]; then
+        # Decompress any gzipped bins
+        local gz_count=$(ls -1 "${output_dir}/output_bins"/*.fa.gz 2>/dev/null | wc -l)
+        if [ $gz_count -gt 0 ]; then
+            log "Decompressing $gz_count gzipped bin files..."
+            gunzip "${output_dir}/output_bins"/*.fa.gz
+            if [ $? -eq 0 ]; then
+                log "Successfully decompressed all bins"
+            else
+                log "WARNING: Some bins failed to decompress"
+            fi
+        fi
+
         local bin_count=$(ls -1 "${output_dir}/output_bins"/*.fa 2>/dev/null | wc -l)
         log "SemiBin2 completed successfully with $bin_count bins"
         return 0
