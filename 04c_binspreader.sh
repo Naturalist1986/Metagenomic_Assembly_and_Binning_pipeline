@@ -135,6 +135,11 @@ run_binspreader() {
 
     mkdir -p "$output_dir"
 
+    # BinSPreader creates a "tmp" directory in the current working directory
+    # Change to output directory so it has write permissions
+    local original_dir=$(pwd)
+    cd "$output_dir" || return 1
+
     # Run BinSPreader with multiple assignment mode
     if [ -n "$dataset_yaml" ] && [ -f "$dataset_yaml" ]; then
         log "Using dataset.yaml for read mapping information"
@@ -158,6 +163,9 @@ run_binspreader() {
     fi
 
     local exit_code=${PIPESTATUS[0]}
+
+    # Change back to original directory
+    cd "$original_dir"
 
     if [ $exit_code -eq 0 ] && [ -f "${output_dir}/bins.tsv" ]; then
         log "BinSPreader completed successfully"
