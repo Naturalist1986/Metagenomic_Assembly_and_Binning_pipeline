@@ -213,20 +213,33 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
 
     # Always use original bins for consensus binning
     log "Using original bins for consensus binning"
+    log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}"
 
     if [ "$USE_COMEBIN" = "true" ]; then
         if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-            log "Adding COMEBin bins"
+            log "Adding COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
             bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
         elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-            log "Adding COMEBin bins (legacy path)"
+            log "Adding COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
             bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+        else
+            log "COMEBin enabled but bins not found at:"
+            log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+            log "  - ${binning_dir}/comebin/comebin_res_bins"
         fi
+    else
+        log "COMEBin not enabled (USE_COMEBIN=${USE_COMEBIN})"
     fi
 
-    if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
-        log "Adding SemiBin bins"
-        bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+    if [ "$USE_SEMIBIN" = "true" ]; then
+        if [ -d "${binning_dir}/semibin/output_bins" ]; then
+            log "Adding SemiBin bins: ${binning_dir}/semibin/output_bins"
+            bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+        else
+            log "SemiBin enabled but bins not found at: ${binning_dir}/semibin/output_bins"
+        fi
+    else
+        log "SemiBin not enabled (USE_SEMIBIN=${USE_SEMIBIN})"
     fi
 
     # Only use MetaWRAP if neither COMEBin nor SemiBin are enabled
@@ -308,20 +321,33 @@ else
 
     # Always use original bins for consensus binning
     log "Using original bins for consensus binning"
+    log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}"
 
     if [ "$USE_COMEBIN" = "true" ]; then
         if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-            log "Adding COMEBin bins"
+            log "Adding COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
             bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
         elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-            log "Adding COMEBin bins (legacy path)"
+            log "Adding COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
             bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+        else
+            log "COMEBin enabled but bins not found at:"
+            log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+            log "  - ${binning_dir}/comebin/comebin_res_bins"
         fi
+    else
+        log "COMEBin not enabled (USE_COMEBIN=${USE_COMEBIN})"
     fi
 
-    if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
-        log "Adding SemiBin bins"
-        bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+    if [ "$USE_SEMIBIN" = "true" ]; then
+        if [ -d "${binning_dir}/semibin/output_bins" ]; then
+            log "Adding SemiBin bins: ${binning_dir}/semibin/output_bins"
+            bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+        else
+            log "SemiBin enabled but bins not found at: ${binning_dir}/semibin/output_bins"
+        fi
+    else
+        log "SemiBin not enabled (USE_SEMIBIN=${USE_SEMIBIN})"
     fi
 
     # Only use MetaWRAP if neither COMEBin nor SemiBin are enabled
