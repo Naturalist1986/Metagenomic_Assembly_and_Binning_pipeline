@@ -178,8 +178,8 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     log "====== Starting Binette Consensus Binning for Treatment: $TREATMENT ======"
 
     # Set up directories
-    local binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}"
-    local assembly_dir="${OUTPUT_DIR}/coassembly/${TREATMENT}"
+    binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}"
+    assembly_dir="${OUTPUT_DIR}/coassembly/${TREATMENT}"
 
     # Check if already processed
     if [ -d "${binning_dir}/binette/final_bins" ] && [ "$(ls -A ${binning_dir}/binette/final_bins/*.fa 2>/dev/null)" ]; then
@@ -189,7 +189,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     fi
 
     # Find assembly FASTA
-    local assembly_fasta=""
+    assembly_fasta=""
     for possible_file in \
         "${assembly_dir}/contigs.fasta" \
         "${assembly_dir}/scaffolds.fasta" \
@@ -209,7 +209,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     fi
 
     # Collect bin directories from all sources
-    local bin_dirs_array=()
+    bin_dirs_array=()
 
     # If BinSPreader is enabled, prefer refined bins over original bins
     if [ "$USE_BINSPREADER" = "true" ]; then
@@ -220,8 +220,11 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
             if [ -d "${binning_dir}/binspreader/comebin_refined" ]; then
                 log "Using BinSPreader-refined COMEBin bins"
                 bin_dirs_array+=("${binning_dir}/binspreader/comebin_refined")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+            elif [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
                 log "BinSPreader refinement not found, using original COMEBin bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+                log "BinSPreader refinement not found, using original COMEBin bins (legacy path)"
                 bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
             fi
         fi
@@ -251,8 +254,12 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
         # BinSPreader not enabled - use original bins
         log "Using original bins (BinSPreader not enabled)"
 
-        if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-            bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+        if [ "$USE_COMEBIN" = "true" ]; then
+            if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+            fi
         fi
 
         if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
@@ -298,8 +305,8 @@ else
     log "====== Starting Binette Consensus Binning for $SAMPLE_NAME ($TREATMENT) ======"
 
     # Set up directories
-    local binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}/${SAMPLE_NAME}"
-    local assembly_dir="${OUTPUT_DIR}/assembly/${TREATMENT}/${SAMPLE_NAME}"
+    binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}/${SAMPLE_NAME}"
+    assembly_dir="${OUTPUT_DIR}/assembly/${TREATMENT}/${SAMPLE_NAME}"
 
     # Check if already processed
     if [ -d "${binning_dir}/binette/final_bins" ] && [ "$(ls -A ${binning_dir}/binette/final_bins/*.fa 2>/dev/null)" ]; then
@@ -309,7 +316,7 @@ else
     fi
 
     # Find assembly FASTA
-    local assembly_fasta=""
+    assembly_fasta=""
     for possible_file in \
         "${assembly_dir}/contigs.fasta" \
         "${assembly_dir}/scaffolds.fasta" \
@@ -331,7 +338,7 @@ else
     fi
 
     # Collect bin directories from all sources
-    local bin_dirs_array=()
+    bin_dirs_array=()
 
     # If BinSPreader is enabled, prefer refined bins over original bins
     if [ "$USE_BINSPREADER" = "true" ]; then
@@ -342,8 +349,11 @@ else
             if [ -d "${binning_dir}/binspreader/comebin_refined" ]; then
                 log "Using BinSPreader-refined COMEBin bins"
                 bin_dirs_array+=("${binning_dir}/binspreader/comebin_refined")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+            elif [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
                 log "BinSPreader refinement not found, using original COMEBin bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+                log "BinSPreader refinement not found, using original COMEBin bins (legacy path)"
                 bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
             fi
         fi
@@ -373,8 +383,12 @@ else
         # BinSPreader not enabled - use original bins
         log "Using original bins (BinSPreader not enabled)"
 
-        if [ "$USE_COMEBIN" = "true" ] && [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-            bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+        if [ "$USE_COMEBIN" = "true" ]; then
+            if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+            fi
         fi
 
         if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
