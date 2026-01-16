@@ -588,6 +588,8 @@ get_binning_script() {
 
 # Function to get the correct refinement script based on flags
 get_refinement_script() {
+    # When both BinSPreader and Binette are enabled, run BinSPreader first
+    # Then Binette will be inserted after stage 4 automatically
     if [ "$USE_BINSPREADER" = true ]; then
         echo "04c_binspreader.sh"
     elif [ "$USE_BINETTE" = true ]; then
@@ -652,7 +654,9 @@ else
 fi
 
 # Update stage 4 name based on refinement tool
-if [ "$USE_BINSPREADER" = true ]; then
+if [ "$USE_BINSPREADER" = true ] && [ "$USE_BINETTE" = true ]; then
+    STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - BinSPreader + Binette)"
+elif [ "$USE_BINSPREADER" = true ]; then
     STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - BinSPreader)"
 elif [ "$USE_BINETTE" = true ]; then
     STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - Binette)"
@@ -1056,6 +1060,7 @@ submit_job() {
     cmd+=",USE_SEMIBIN=${USE_SEMIBIN}"
     cmd+=",USE_BINSPREADER=${USE_BINSPREADER}"
     cmd+=",USE_BINETTE=${USE_BINETTE}"
+    cmd+=",BINETTE_USE_REFINED=${BINETTE_USE_REFINED}"
     cmd+=",USE_GUNC=${USE_GUNC}"
     cmd+=",PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING}"
     cmd+=",TREATMENTS_FILE=${TREATMENTS_FILE}"
@@ -1332,6 +1337,94 @@ for stage in "${STAGES_TO_RUN[@]}"; do
 
     previous_job_id="${job_id}"
     echo
+
+    # Insert Binette after BinSPreader if both are enabled
+    if [ "$stage" = "4" ] && [ "$USE_BINSPREADER" = true ] && [ "$USE_BINETTE" = true ]; then
+        echo "📄 Processing stage 4 (part 2): Binette Consensus Binning"
+
+        binette_script="04b_binette.sh"
+        slurm_log_dir="${OUTPUT_DIR}/logs/slurm"
+
+        # Calculate array size for stage 4
+        array_size=$(calculate_array_size 4)
+
+        if [ $array_size -gt 0 ]; then
+            cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
+            cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
+            cmd+=",TREATMENT_LEVEL_BINNING=${TREATMENT_LEVEL_BINNING},USE_COMEBIN=${USE_COMEBIN},USE_SEMIBIN=${USE_SEMIBIN}"
+            cmd+=",USE_BINSPREADER=${USE_BINSPREADER},USE_BINETTE=${USE_BINETTE},BINETTE_USE_REFINED=${BINETTE_USE_REFINED},USE_GUNC=${USE_GUNC}"
+            cmd+=",PER_SAMPLE_CROSS_MAPPING=${PER_SAMPLE_CROSS_MAPPING},TREATMENTS_FILE=${TREATMENTS_FILE}"
+            cmd+=",SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE},SLURM_ACCOUNT=${SLURM_ACCOUNT}"
+
+            # Export assembly parameters if set
+            if [ -n "$ASSEMBLY_THREADS" ]; then
+                cmd+=",ASSEMBLY_THREADS=${ASSEMBLY_THREADS}"
+            fi
+            if [ -n "$ASSEMBLY_MEMORY" ]; then
+                cmd+=",ASSEMBLY_MEMORY=${ASSEMBLY_MEMORY}"
+            fi
+            if [ -n "$COASSEMBLY_MEMORY" ]; then
+                cmd+=",COASSEMBLY_MEMORY=${COASSEMBLY_MEMORY}"
+            fi
+            if [ -n "$BIN_REASSEMBLY_THREADS" ]; then
+                cmd+=",BIN_REASSEMBLY_THREADS=${BIN_REASSEMBLY_THREADS}"
+            fi
+            if [ -n "$BIN_REASSEMBLY_MEMORY" ]; then
+                cmd+=",BIN_REASSEMBLY_MEMORY=${BIN_REASSEMBLY_MEMORY}"
+            fi
+
+            # Add dependency on previous BinSPreader job
+            if [ -n "$previous_job_id" ]; then
+                cmd+=" --dependency=afterok:${previous_job_id}"
+            fi
+
+            if [ -n "$SLURM_ACCOUNT" ]; then
+                cmd+=" --account=${SLURM_ACCOUNT}"
+            fi
+
+            script_basename=$(basename -- "$binette_script" .sh)
+            cmd+=" --output=${slurm_log_dir}/${script_basename}_%A_%a.log"
+            cmd+=" --error=${slurm_log_dir}/${script_basename}_%A_%a.err"
+
+            # Build array indices
+            if [ $array_size -gt 1 ]; then
+                indices=($(get_filtered_indices 4))
+                if [ ${#indices[@]} -gt 0 ]; then
+                    array_str=""
+                    for i in "${indices[@]}"; do
+                        if [ -z "$array_str" ]; then
+                            array_str="$i"
+                        else
+                            array_str="$array_str,$i"
+                        fi
+                    done
+                    cmd+=" --array=${array_str}"
+                fi
+            elif [ $array_size -eq 1 ]; then
+                indices=($(get_filtered_indices 4))
+                if [ ${#indices[@]} -gt 0 ]; then
+                    cmd+=" --array=${indices[0]}"
+                fi
+            fi
+
+            cmd+=" ${SCRIPT_DIR}/${binette_script}"
+
+            if [ "$DRY_RUN" = true ]; then
+                echo "   [DRY RUN] Would execute: $cmd"
+                binette_job_id="999999"
+            else
+                binette_job_id=$(eval "$cmd" | awk '{print $NF}')
+                if [ -n "$binette_job_id" ]; then
+                    echo "   ✅ Submitted Binette job: $binette_job_id"
+                    ((jobs_submitted++))
+                    previous_job_id="$binette_job_id"
+                else
+                    echo "   ❌ Failed to submit Binette job"
+                fi
+            fi
+        fi
+        echo
+    fi
 
     # Insert plasmid detection after assembly if enabled
     if [ "$stage" = "2" ] && [ "$SKIP_PLASMID_DETECTION" = false ]; then
