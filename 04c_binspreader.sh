@@ -203,7 +203,7 @@ run_binspreader() {
             -m \
             -t ${SLURM_CPUS_PER_TASK:-50} \
             --dataset "$dataset_yaml" \
-            -Rcorr \
+            -Rprop \
             --sparse-propagation \
             2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_binspreader.log"
     else
@@ -214,7 +214,7 @@ run_binspreader() {
             "$output_basename" \
             -m \
             -t ${SLURM_CPUS_PER_TASK:-50} \
-            -Rcorr \
+            -Rprop \
             --sparse-propagation \
             2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_binspreader.log"
     fi
