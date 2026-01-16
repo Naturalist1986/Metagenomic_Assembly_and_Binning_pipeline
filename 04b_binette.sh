@@ -211,62 +211,28 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     # Collect bin directories from all sources
     bin_dirs_array=()
 
-    # If BinSPreader is enabled, prefer refined bins over original bins
-    if [ "$USE_BINSPREADER" = "true" ]; then
-        log "BinSPreader enabled - using refined bins"
+    # Always use original bins for consensus binning
+    log "Using original bins for consensus binning"
 
-        # Use refined COMEBin bins if available
-        if [ "$USE_COMEBIN" = "true" ]; then
-            if [ -d "${binning_dir}/binspreader/comebin_refined" ]; then
-                log "Using BinSPreader-refined COMEBin bins"
-                bin_dirs_array+=("${binning_dir}/binspreader/comebin_refined")
-            elif [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-                log "BinSPreader refinement not found, using original COMEBin bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-                log "BinSPreader refinement not found, using original COMEBin bins (legacy path)"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-            fi
+    if [ "$USE_COMEBIN" = "true" ]; then
+        if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+            log "Adding COMEBin bins"
+            bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+        elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+            log "Adding COMEBin bins (legacy path)"
+            bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
         fi
+    fi
 
-        # Use refined SemiBin bins if available
-        if [ "$USE_SEMIBIN" = "true" ]; then
-            if [ -d "${binning_dir}/binspreader/semibin_refined" ]; then
-                log "Using BinSPreader-refined SemiBin bins"
-                bin_dirs_array+=("${binning_dir}/binspreader/semibin_refined")
-            elif [ -d "${binning_dir}/semibin/output_bins" ]; then
-                log "BinSPreader refinement not found, using original SemiBin bins"
-                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
-            fi
-        fi
+    if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
+        log "Adding SemiBin bins"
+        bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+    fi
 
-        # Use refined MetaWRAP bins if available
-        if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ]; then
-            if [ -d "${binning_dir}/binspreader/metawrap_refined" ]; then
-                log "Using BinSPreader-refined MetaWRAP bins"
-                bin_dirs_array+=("${binning_dir}/binspreader/metawrap_refined")
-            elif [ -d "${binning_dir}/metawrap_bins" ]; then
-                log "BinSPreader refinement not found, using original MetaWRAP bins"
-                bin_dirs_array+=("${binning_dir}/metawrap_bins")
-            fi
-        fi
-    else
-        # BinSPreader not enabled - use original bins
-        log "Using original bins (BinSPreader not enabled)"
-
-        if [ "$USE_COMEBIN" = "true" ]; then
-            if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-            fi
-        fi
-
-        if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
-            bin_dirs_array+=("${binning_dir}/semibin/output_bins")
-        fi
-
+    # Only use MetaWRAP if neither COMEBin nor SemiBin are enabled
+    if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ]; then
         if [ -d "${binning_dir}/metawrap_bins" ]; then
+            log "Adding MetaWRAP bins"
             bin_dirs_array+=("${binning_dir}/metawrap_bins")
         fi
     fi
@@ -340,62 +306,28 @@ else
     # Collect bin directories from all sources
     bin_dirs_array=()
 
-    # If BinSPreader is enabled, prefer refined bins over original bins
-    if [ "$USE_BINSPREADER" = "true" ]; then
-        log "BinSPreader enabled - using refined bins"
+    # Always use original bins for consensus binning
+    log "Using original bins for consensus binning"
 
-        # Use refined COMEBin bins if available
-        if [ "$USE_COMEBIN" = "true" ]; then
-            if [ -d "${binning_dir}/binspreader/comebin_refined" ]; then
-                log "Using BinSPreader-refined COMEBin bins"
-                bin_dirs_array+=("${binning_dir}/binspreader/comebin_refined")
-            elif [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-                log "BinSPreader refinement not found, using original COMEBin bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-                log "BinSPreader refinement not found, using original COMEBin bins (legacy path)"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-            fi
+    if [ "$USE_COMEBIN" = "true" ]; then
+        if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+            log "Adding COMEBin bins"
+            bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+        elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+            log "Adding COMEBin bins (legacy path)"
+            bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
         fi
+    fi
 
-        # Use refined SemiBin bins if available
-        if [ "$USE_SEMIBIN" = "true" ]; then
-            if [ -d "${binning_dir}/binspreader/semibin_refined" ]; then
-                log "Using BinSPreader-refined SemiBin bins"
-                bin_dirs_array+=("${binning_dir}/binspreader/semibin_refined")
-            elif [ -d "${binning_dir}/semibin/output_bins" ]; then
-                log "BinSPreader refinement not found, using original SemiBin bins"
-                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
-            fi
-        fi
+    if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
+        log "Adding SemiBin bins"
+        bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+    fi
 
-        # Use refined MetaWRAP bins if available
-        if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ]; then
-            if [ -d "${binning_dir}/binspreader/metawrap_refined" ]; then
-                log "Using BinSPreader-refined MetaWRAP bins"
-                bin_dirs_array+=("${binning_dir}/binspreader/metawrap_refined")
-            elif [ -d "${binning_dir}/metawrap_50_10_bins" ]; then
-                log "BinSPreader refinement not found, using original MetaWRAP bins"
-                bin_dirs_array+=("${binning_dir}/metawrap_50_10_bins")
-            fi
-        fi
-    else
-        # BinSPreader not enabled - use original bins
-        log "Using original bins (BinSPreader not enabled)"
-
-        if [ "$USE_COMEBIN" = "true" ]; then
-            if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-            fi
-        fi
-
-        if [ "$USE_SEMIBIN" = "true" ] && [ -d "${binning_dir}/semibin/output_bins" ]; then
-            bin_dirs_array+=("${binning_dir}/semibin/output_bins")
-        fi
-
+    # Only use MetaWRAP if neither COMEBin nor SemiBin are enabled
+    if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ]; then
         if [ -d "${binning_dir}/metawrap_50_10_bins" ]; then
+            log "Adding MetaWRAP bins"
             bin_dirs_array+=("${binning_dir}/metawrap_50_10_bins")
         fi
     fi
