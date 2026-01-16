@@ -203,6 +203,8 @@ run_binspreader() {
             -m \
             -t ${SLURM_CPUS_PER_TASK:-50} \
             --dataset "$dataset_yaml" \
+            --prop \
+            --sparse-propagation \
             2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_binspreader.log"
     else
         log "Running without dataset.yaml"
@@ -212,6 +214,8 @@ run_binspreader() {
             "$output_basename" \
             -m \
             -t ${SLURM_CPUS_PER_TASK:-50} \
+            --prop \
+            --sparse-propagation \
             2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_binspreader.log"
     fi
 
