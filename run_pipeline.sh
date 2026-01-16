@@ -18,6 +18,7 @@ USE_SEMIBIN=false  # Use SemiBin2 for binning instead of MetaWRAP
 PER_SAMPLE_CROSS_MAPPING=false  # Map all samples in treatment to each sample's assembly
 USE_BINSPREADER=false  # Use BinSPreader for graph-aware bin refinement
 USE_BINETTE=false  # Use Binette for consensus binning (replaces DAS Tool)
+BINETTE_USE_REFINED=false  # Make Binette use BinSPreader-refined bins instead of original bins
 USE_GUNC=false  # Run GUNC for chimerism detection after CheckM2
 SKIP_MERGE_LANES=true  # Skip lane merging by default (optional stage)
 SKIP_PLASMID_DETECTION=true  # Skip plasmid detection by default (optional stage)
@@ -40,6 +41,7 @@ OPTIONS:
     --per-sample-cross-mapping    Map all treatment samples to each sample's assembly (individual mode only)
     --binspreader                 Use BinSPreader for graph-aware bin refinement (requires assembly graph)
     --binette                     Use Binette for consensus binning instead of DAS Tool (requires binette env)
+    --binette-use-refined         Make Binette use BinSPreader-refined bins instead of original bins
     --gunc                        Run GUNC chimerism detection on final bins (requires gunc env)
     -t, --treatment NAME          Run only for specific treatment/group (can be used multiple times)
     -m, --sample NAME             Run only for specific sample (can be used multiple times)
@@ -277,6 +279,10 @@ while [[ $# -gt 0 ]]; do
             USE_BINETTE=true
             shift
             ;;
+        --binette-use-refined)
+            BINETTE_USE_REFINED=true
+            shift
+            ;;
         --gunc)
             USE_GUNC=true
             shift
@@ -396,6 +402,7 @@ export PER_SAMPLE_CROSS_MAPPING
 export USE_SEMIBIN
 export USE_BINSPREADER
 export USE_BINETTE
+export BINETTE_USE_REFINED
 export USE_GUNC
 export WORK_DIR="${OUTPUT_DIR}/processing_workdir"
 

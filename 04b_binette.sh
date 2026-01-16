@@ -27,7 +27,7 @@ run_binette() {
     local contigs_file="$1"
     shift
     local bin_dirs=("$@")  # Array of bin directories
-    local output_dir="${binning_dir}/binette"
+    local output_dir="${BINETTE_OUTPUT_DIR}"  # Use global variable for output directory
     local checkm2_db="${CHECKM2_DB:-}"  # Optional: specify CheckM2 database
 
     log "Running Binette consensus binning..."
@@ -181,8 +181,11 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}"
     assembly_dir="${OUTPUT_DIR}/coassembly/${TREATMENT}"
 
+    # Set output directory for Binette
+    BINETTE_OUTPUT_DIR="${OUTPUT_DIR}/bin_refinement/${TREATMENT}/binette"
+
     # Check if already processed
-    if [ -d "${binning_dir}/binette/final_bins" ] && [ "$(ls -A ${binning_dir}/binette/final_bins/*.fa 2>/dev/null)" ]; then
+    if [ -d "${BINETTE_OUTPUT_DIR}/final_bins" ] && [ "$(ls -A ${BINETTE_OUTPUT_DIR}/final_bins/*.fa 2>/dev/null)" ]; then
         log "Binette already completed for treatment $TREATMENT, skipping..."
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
@@ -211,35 +214,69 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
     # Collect bin directories from all sources
     bin_dirs_array=()
 
-    # Always use original bins for consensus binning
-    log "Using original bins for consensus binning"
-    log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}"
+    # Decide whether to use refined or original bins
+    if [ "$BINETTE_USE_REFINED" = "true" ]; then
+        log "Using BinSPreader-refined bins for consensus binning"
+        log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}, BINETTE_USE_REFINED=${BINETTE_USE_REFINED}"
 
-    if [ "$USE_COMEBIN" = "true" ]; then
-        if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-            log "Adding COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-            bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-        elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-            log "Adding COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
-            bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-        else
-            log "COMEBin enabled but bins not found at:"
-            log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-            log "  - ${binning_dir}/comebin/comebin_res_bins"
+        # Use refined COMEBin bins if available
+        if [ "$USE_COMEBIN" = "true" ]; then
+            if [ -d "${binning_dir}/binspreader/comebin_refined" ]; then
+                log "Adding BinSPreader-refined COMEBin bins: ${binning_dir}/binspreader/comebin_refined"
+                bin_dirs_array+=("${binning_dir}/binspreader/comebin_refined")
+            elif [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+                log "Refined bins not found, using original COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+                log "Refined bins not found, using original COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+            else
+                log "COMEBin enabled but bins not found"
+            fi
+        fi
+
+        # Use refined SemiBin bins if available
+        if [ "$USE_SEMIBIN" = "true" ]; then
+            if [ -d "${binning_dir}/binspreader/semibin_refined" ]; then
+                log "Adding BinSPreader-refined SemiBin bins: ${binning_dir}/binspreader/semibin_refined"
+                bin_dirs_array+=("${binning_dir}/binspreader/semibin_refined")
+            elif [ -d "${binning_dir}/semibin/output_bins" ]; then
+                log "Refined bins not found, using original SemiBin bins: ${binning_dir}/semibin/output_bins"
+                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+            else
+                log "SemiBin enabled but bins not found"
+            fi
         fi
     else
-        log "COMEBin not enabled (USE_COMEBIN=${USE_COMEBIN})"
-    fi
+        log "Using original bins for consensus binning"
+        log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}, BINETTE_USE_REFINED=${BINETTE_USE_REFINED}"
 
-    if [ "$USE_SEMIBIN" = "true" ]; then
-        if [ -d "${binning_dir}/semibin/output_bins" ]; then
-            log "Adding SemiBin bins: ${binning_dir}/semibin/output_bins"
-            bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+        if [ "$USE_COMEBIN" = "true" ]; then
+            if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+                log "Adding COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+                log "Adding COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+            else
+                log "COMEBin enabled but bins not found at:"
+                log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+                log "  - ${binning_dir}/comebin/comebin_res_bins"
+            fi
         else
-            log "SemiBin enabled but bins not found at: ${binning_dir}/semibin/output_bins"
+            log "COMEBin not enabled (USE_COMEBIN=${USE_COMEBIN})"
         fi
-    else
-        log "SemiBin not enabled (USE_SEMIBIN=${USE_SEMIBIN})"
+
+        if [ "$USE_SEMIBIN" = "true" ]; then
+            if [ -d "${binning_dir}/semibin/output_bins" ]; then
+                log "Adding SemiBin bins: ${binning_dir}/semibin/output_bins"
+                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+            else
+                log "SemiBin enabled but bins not found at: ${binning_dir}/semibin/output_bins"
+            fi
+        else
+            log "SemiBin not enabled (USE_SEMIBIN=${USE_SEMIBIN})"
+        fi
     fi
 
     # Only use MetaWRAP if neither COMEBin nor SemiBin are enabled
@@ -258,7 +295,7 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
 
     # Run Binette
     if run_binette "$assembly_fasta" "${bin_dirs_array[@]}"; then
-        create_binette_summary "${binning_dir}/binette"
+        create_binette_summary "${BINETTE_OUTPUT_DIR}"
         log "====== Binette completed for treatment $TREATMENT ======"
     else
         log "ERROR: Binette failed"
@@ -287,8 +324,11 @@ else
     binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}/${SAMPLE_NAME}"
     assembly_dir="${OUTPUT_DIR}/assembly/${TREATMENT}/${SAMPLE_NAME}"
 
+    # Set output directory for Binette
+    BINETTE_OUTPUT_DIR="${OUTPUT_DIR}/bin_refinement/${TREATMENT}/${SAMPLE_NAME}/binette"
+
     # Check if already processed
-    if [ -d "${binning_dir}/binette/final_bins" ] && [ "$(ls -A ${binning_dir}/binette/final_bins/*.fa 2>/dev/null)" ]; then
+    if [ -d "${BINETTE_OUTPUT_DIR}/final_bins" ] && [ "$(ls -A ${BINETTE_OUTPUT_DIR}/final_bins/*.fa 2>/dev/null)" ]; then
         log "Binette already completed for $SAMPLE_NAME, skipping..."
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
@@ -319,35 +359,69 @@ else
     # Collect bin directories from all sources
     bin_dirs_array=()
 
-    # Always use original bins for consensus binning
-    log "Using original bins for consensus binning"
-    log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}"
+    # Decide whether to use refined or original bins
+    if [ "$BINETTE_USE_REFINED" = "true" ]; then
+        log "Using BinSPreader-refined bins for consensus binning"
+        log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}, BINETTE_USE_REFINED=${BINETTE_USE_REFINED}"
 
-    if [ "$USE_COMEBIN" = "true" ]; then
-        if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-            log "Adding COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-            bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-        elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-            log "Adding COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
-            bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-        else
-            log "COMEBin enabled but bins not found at:"
-            log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-            log "  - ${binning_dir}/comebin/comebin_res_bins"
+        # Use refined COMEBin bins if available
+        if [ "$USE_COMEBIN" = "true" ]; then
+            if [ -d "${binning_dir}/binspreader/comebin_refined" ]; then
+                log "Adding BinSPreader-refined COMEBin bins: ${binning_dir}/binspreader/comebin_refined"
+                bin_dirs_array+=("${binning_dir}/binspreader/comebin_refined")
+            elif [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+                log "Refined bins not found, using original COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+                log "Refined bins not found, using original COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+            else
+                log "COMEBin enabled but bins not found"
+            fi
+        fi
+
+        # Use refined SemiBin bins if available
+        if [ "$USE_SEMIBIN" = "true" ]; then
+            if [ -d "${binning_dir}/binspreader/semibin_refined" ]; then
+                log "Adding BinSPreader-refined SemiBin bins: ${binning_dir}/binspreader/semibin_refined"
+                bin_dirs_array+=("${binning_dir}/binspreader/semibin_refined")
+            elif [ -d "${binning_dir}/semibin/output_bins" ]; then
+                log "Refined bins not found, using original SemiBin bins: ${binning_dir}/semibin/output_bins"
+                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+            else
+                log "SemiBin enabled but bins not found"
+            fi
         fi
     else
-        log "COMEBin not enabled (USE_COMEBIN=${USE_COMEBIN})"
-    fi
+        log "Using original bins for consensus binning"
+        log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}, BINETTE_USE_REFINED=${BINETTE_USE_REFINED}"
 
-    if [ "$USE_SEMIBIN" = "true" ]; then
-        if [ -d "${binning_dir}/semibin/output_bins" ]; then
-            log "Adding SemiBin bins: ${binning_dir}/semibin/output_bins"
-            bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+        if [ "$USE_COMEBIN" = "true" ]; then
+            if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+                log "Adding COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+                log "Adding COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
+                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+            else
+                log "COMEBin enabled but bins not found at:"
+                log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+                log "  - ${binning_dir}/comebin/comebin_res_bins"
+            fi
         else
-            log "SemiBin enabled but bins not found at: ${binning_dir}/semibin/output_bins"
+            log "COMEBin not enabled (USE_COMEBIN=${USE_COMEBIN})"
         fi
-    else
-        log "SemiBin not enabled (USE_SEMIBIN=${USE_SEMIBIN})"
+
+        if [ "$USE_SEMIBIN" = "true" ]; then
+            if [ -d "${binning_dir}/semibin/output_bins" ]; then
+                log "Adding SemiBin bins: ${binning_dir}/semibin/output_bins"
+                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+            else
+                log "SemiBin enabled but bins not found at: ${binning_dir}/semibin/output_bins"
+            fi
+        else
+            log "SemiBin not enabled (USE_SEMIBIN=${USE_SEMIBIN})"
+        fi
     fi
 
     # Only use MetaWRAP if neither COMEBin nor SemiBin are enabled
@@ -366,7 +440,7 @@ else
 
     # Run Binette
     if run_binette "$assembly_fasta" "${bin_dirs_array[@]}"; then
-        create_binette_summary "${binning_dir}/binette"
+        create_binette_summary "${BINETTE_OUTPUT_DIR}"
         log "====== Binette completed for $SAMPLE_NAME ======"
     else
         log "ERROR: Binette failed"
