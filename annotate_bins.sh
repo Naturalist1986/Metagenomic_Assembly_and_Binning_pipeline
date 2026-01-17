@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=bin_annotation
 #SBATCH --array=0-99%10
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=50
+#SBATCH --mem=500G
 #SBATCH --time=24:00:00
 #SBATCH --output=logs/slurm/bin_annotation_%A_%a.log
 #SBATCH --error=logs/slurm/bin_annotation_%A_%a.err
@@ -24,8 +24,9 @@ MICROBEANNOTATOR_DB="/sci/backup/aerez/aerez/moshea/MicrobeAnnotator_DB/"
 # Treatment to process (e.g., carR)
 TREATMENT="${TREATMENT:-carR}"
 
-# Number of threads for MicrobeAnnotator
-THREADS=8
+# MicrobeAnnotator parallelization settings
+PROCESSES=10              # Number of parallel processes (-p)
+THREADS_PER_PROCESS=5     # Threads per process (-t)
 
 # =======================================================
 
@@ -126,13 +127,14 @@ cd "$PROTEIN_DIR"
 
 # Run MicrobeAnnotator on all protein files
 echo "[$(date)] Running MicrobeAnnotator on ${#protein_files[@]} protein files"
+echo "[$(date)] Using $PROCESSES processes with $THREADS_PER_PROCESS threads each"
 
 if microbeannotator \
     -i *.faa \
     -m diamond \
     -d "$MICROBEANNOTATOR_DB" \
-    -p "$THREADS" \
-    -t 5 \
+    -p "$PROCESSES" \
+    -t "$THREADS_PER_PROCESS" \
     -o "$ANNOTATION_DIR" \
     --cluster both 2>&1 | tee "${ANNOTATION_DIR}/microbeannotator.log"; then
 
