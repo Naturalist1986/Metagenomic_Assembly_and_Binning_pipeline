@@ -11,6 +11,14 @@
 
 set -euo pipefail
 
+# Source configuration and utilities
+if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
+    source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+else
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    source "${SCRIPT_DIR}/00_config_utilities.sh"
+fi
+
 # ==================== USER SETTINGS ====================
 
 # Base directory containing binning results
@@ -120,6 +128,18 @@ fi
 
 echo "[$(date)] ====== Running MicrobeAnnotator ======"
 
+# Activate MicrobeAnnotator conda environment
+log "Activating MicrobeAnnotator conda environment..."
+activate_env microbeannotator
+
+# Check if MicrobeAnnotator is available
+if ! command -v microbeannotator &> /dev/null; then
+    log "ERROR: MicrobeAnnotator not available in conda environment"
+    log "Expected conda environment: microbeannotator"
+    conda deactivate
+    exit 1
+fi
+
 # Change to protein directory for MicrobeAnnotator
 cd "$PROTEIN_DIR"
 
@@ -137,8 +157,10 @@ if microbeannotator \
     --cluster both 2>&1 | tee "${ANNOTATION_DIR}/microbeannotator.log"; then
 
     echo "[$(date)] ✓ MicrobeAnnotator completed successfully"
+    conda deactivate
 else
     echo "[$(date)] ✗ MicrobeAnnotator failed"
+    conda deactivate
     exit 1
 fi
 
