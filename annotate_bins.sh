@@ -4,8 +4,6 @@
 #SBATCH --cpus-per-task=50
 #SBATCH --mem=500G
 #SBATCH --time=24:00:00
-#SBATCH --output=logs/slurm/bin_annotation_%A_%a.log
-#SBATCH --error=logs/slurm/bin_annotation_%A_%a.err
 #SBATCH --account=ofinkel
 
 # Script to run Prodigal and MicrobeAnnotator on COMEBin and SemiBin bins

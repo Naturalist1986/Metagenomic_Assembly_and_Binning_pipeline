@@ -109,14 +109,30 @@ done
 
 echo ""
 echo "Total bin directories to annotate: ${#BIN_DIRS[@]}"
+echo ""
 
 if [ ${#BIN_DIRS[@]} -eq 0 ]; then
     echo "ERROR: No bin directories found for treatment $TREATMENT"
+    echo ""
+    echo "Searched in: ${BINNING_BASE}/${TREATMENT}/*"
+    echo ""
+    echo "Expected directory structures:"
+    echo "  - COMEBin: sample_dir/comebin/comebin_res/comebin_res_bins/*.fa"
+    echo "  - SemiBin: sample_dir/semibin/output_bins/*.fa"
     exit 1
 fi
 
+echo "Bin directories found:"
+for i in "${!BIN_DIRS[@]}"; do
+    IFS='|' read -r sample binner dir <<< "${BIN_DIRS[$i]}"
+    bin_count=$(ls -1 ${dir}/*.fa 2>/dev/null | wc -l)
+    echo "  [$i] ${sample} / ${binner}: ${bin_count} bins"
+done
+echo ""
+
 # Create logs directory
-mkdir -p "${BINNING_BASE}/../logs/slurm"
+LOG_DIR="${BINNING_BASE}/../logs/slurm"
+mkdir -p "$LOG_DIR"
 
 # Build sbatch command
 ARRAY_SIZE=${#BIN_DIRS[@]}
@@ -124,11 +140,15 @@ ARRAY_MAX=$((ARRAY_SIZE - 1))
 
 CMD="sbatch"
 CMD+=" --export=ALL,TREATMENT=${TREATMENT}"
+CMD+=" --output=${LOG_DIR}/bin_annotation_%A_%a.log"
+CMD+=" --error=${LOG_DIR}/bin_annotation_%A_%a.err"
 CMD+=" --array=0-${ARRAY_MAX}"
 CMD+=" ${SCRIPT_DIR}/annotate_bins.sh"
 
 echo ""
 echo "Submitting annotation job array..."
+echo "  Array size: 0-${ARRAY_MAX} (${ARRAY_SIZE} tasks)"
+echo "  Log directory: ${LOG_DIR}"
 echo "Command: $CMD"
 echo ""
 
@@ -145,6 +165,9 @@ if [ -n "$JOB_ID" ]; then
     echo ""
     echo "Monitor with: squeue -j $JOB_ID"
     echo "Cancel with: scancel $JOB_ID"
+    echo ""
+    echo "Logs will be in:"
+    echo "  ${LOG_DIR}/bin_annotation_${JOB_ID}_*.log"
     echo ""
     echo "Output will be in:"
     echo "  Proteins: binning/${TREATMENT}/*/annotations/*/proteins/"
