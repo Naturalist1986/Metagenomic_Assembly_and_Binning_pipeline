@@ -132,39 +132,89 @@ fi
 # ==================== STEP 2: Run MicrobeAnnotator ====================
 
 echo "[$(date)] ====== Running MicrobeAnnotator ======"
+echo "[$(date)] Step 1: Preparing to activate conda environment..."
 
-# Activate MicrobeAnnotator conda environment
-log "Activating MicrobeAnnotator conda environment..."
-activate_env microbeannotator
+# Initialize conda if not already done
+export CONDA_BASE="${CONDA_BASE:-/sci/home/moshea/miniconda3}"
+echo "[$(date)] CONDA_BASE: $CONDA_BASE"
 
-# Check if MicrobeAnnotator is available
+if [ ! -f "${CONDA_BASE}/etc/profile.d/conda.sh" ]; then
+    echo "[$(date)] ERROR: conda.sh not found at ${CONDA_BASE}/etc/profile.d/conda.sh"
+    exit 1
+fi
+
+echo "[$(date)] Step 2: Sourcing conda.sh..."
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
+
+echo "[$(date)] Step 3: Activating microbeannotator environment..."
+if ! conda activate microbeannotator; then
+    echo "[$(date)] ERROR: Failed to activate microbeannotator conda environment"
+    echo "[$(date)] Available environments:"
+    conda env list
+    exit 1
+fi
+
+echo "[$(date)] Step 4: Checking if microbeannotator command is available..."
 if ! command -v microbeannotator &> /dev/null; then
-    log "ERROR: MicrobeAnnotator not available in conda environment"
-    log "Expected conda environment: microbeannotator"
+    echo "[$(date)] ERROR: MicrobeAnnotator not available in conda environment"
+    echo "[$(date)] Current conda environment: $CONDA_DEFAULT_ENV"
+    echo "[$(date)] PATH: $PATH"
     conda deactivate
     exit 1
 fi
 
-# Change to protein directory for MicrobeAnnotator
-cd "$PROTEIN_DIR"
+echo "[$(date)] Step 5: MicrobeAnnotator found at: $(which microbeannotator)"
+echo "[$(date)] Step 6: Verifying protein directory: $PROTEIN_DIR"
+if [ ! -d "$PROTEIN_DIR" ]; then
+    echo "[$(date)] ERROR: Protein directory not found: $PROTEIN_DIR"
+    conda deactivate
+    exit 1
+fi
+
+echo "[$(date)] Step 7: Changing to protein directory..."
+cd "$PROTEIN_DIR" || {
+    echo "[$(date)] ERROR: Failed to change to protein directory"
+    conda deactivate
+    exit 1
+}
+
+echo "[$(date)] Step 8: Listing protein files..."
+ls -lh *.faa | head -5
+echo "[$(date)] Total protein files: $(ls -1 *.faa 2>/dev/null | wc -l)"
+
+# Create annotation output directory
+echo "[$(date)] Step 9: Creating annotation output directory: $ANNOTATION_DIR"
+mkdir -p "$ANNOTATION_DIR"
 
 # Run MicrobeAnnotator on all protein files
-echo "[$(date)] Running MicrobeAnnotator on ${#protein_files[@]} protein files"
+echo "[$(date)] Step 10: Starting MicrobeAnnotator on ${#protein_files[@]} protein files"
 echo "[$(date)] Using $PROCESSES processes with $THREADS_PER_PROCESS threads each"
+echo "[$(date)] Database: $MICROBEANNOTATOR_DB"
+echo "[$(date)] Output directory: $ANNOTATION_DIR"
+echo "[$(date)] Current working directory: $(pwd)"
+echo "[$(date)] Starting at: $(date)"
 
-if microbeannotator \
+set +e  # Temporarily disable exit on error to capture output
+microbeannotator \
     -i *.faa \
     -m diamond \
     -d "$MICROBEANNOTATOR_DB" \
     -p "$PROCESSES" \
     -t "$THREADS_PER_PROCESS" \
     -o "$ANNOTATION_DIR" \
-    --cluster both 2>&1 | tee "${ANNOTATION_DIR}/microbeannotator.log"; then
+    --cluster both 2>&1 | tee "${ANNOTATION_DIR}/microbeannotator.log"
 
+EXIT_CODE=${PIPESTATUS[0]}
+set -e  # Re-enable exit on error
+
+echo "[$(date)] MicrobeAnnotator finished with exit code: $EXIT_CODE"
+
+if [ $EXIT_CODE -eq 0 ]; then
     echo "[$(date)] ✓ MicrobeAnnotator completed successfully"
     conda deactivate
 else
-    echo "[$(date)] ✗ MicrobeAnnotator failed"
+    echo "[$(date)] ✗ MicrobeAnnotator failed with exit code: $EXIT_CODE"
+    echo "[$(date)] Check log file: ${ANNOTATION_DIR}/microbeannotator.log"
     conda deactivate
     exit 1
 fi
