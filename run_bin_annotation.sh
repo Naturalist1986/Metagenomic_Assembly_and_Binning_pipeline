@@ -139,7 +139,7 @@ ARRAY_SIZE=${#BIN_DIRS[@]}
 ARRAY_MAX=$((ARRAY_SIZE - 1))
 
 CMD="sbatch"
-CMD+=" --export=ALL,TREATMENT=${TREATMENT}"
+CMD+=" --export=ALL,TREATMENT=${TREATMENT},PIPELINE_SCRIPT_DIR=${SCRIPT_DIR}"
 CMD+=" --output=${LOG_DIR}/bin_annotation_%A_%a.log"
 CMD+=" --error=${LOG_DIR}/bin_annotation_%A_%a.err"
 CMD+=" --array=0-${ARRAY_MAX}"
