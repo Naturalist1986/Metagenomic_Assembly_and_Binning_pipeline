@@ -96,12 +96,32 @@ mkdir -p "$ANNOTATION_DIR"
 # ==================== STEP 1: Run Prodigal ====================
 
 echo "[$(date)] ====== Running Prodigal on bins ======"
+echo "[$(date)] Bin directory: $BIN_DIR"
+echo "[$(date)] Protein output directory: $PROTEIN_DIR"
+
+# Count total bins first
+total_bins=$(ls -1 "${BIN_DIR}"/*.fa 2>/dev/null | wc -l)
+echo "[$(date)] Found $total_bins bin files to process"
+
+if [ $total_bins -eq 0 ]; then
+    echo "[$(date)] ERROR: No .fa files found in $BIN_DIR"
+    exit 1
+fi
+
+# List first few bins
+echo "[$(date)] First 5 bins:"
+ls -1 "${BIN_DIR}"/*.fa | head -5
 
 bin_count=0
+failed_count=0
 protein_files=()
+
+# Temporarily disable exit on error for Prodigal loop
+set +e
 
 for bin_file in "${BIN_DIR}"/*.fa; do
     if [ ! -f "$bin_file" ]; then
+        echo "[$(date)]   Skipping non-file: $bin_file"
         continue
     fi
 
@@ -111,18 +131,31 @@ for bin_file in "${BIN_DIR}"/*.fa; do
     out_genes="${PROTEIN_DIR}/${stem}-genes.fna"
     out_prot="${PROTEIN_DIR}/${stem}-proteins.faa"
 
-    echo "[$(date)]   Processing bin: $base"
+    echo "[$(date)]   [$((bin_count + failed_count + 1))/$total_bins] Processing bin: $base"
 
-    if prodigal -i "$bin_file" -d "$out_genes" -a "$out_prot" 2>&1; then
-        echo "[$(date)]   ✓ Prodigal completed for $base"
-        protein_files+=("$out_prot")
-        ((bin_count++))
+    # Run prodigal and capture output
+    if prodigal -i "$bin_file" -d "$out_genes" -a "$out_prot" > "${PROTEIN_DIR}/${stem}-prodigal.log" 2>&1; then
+        if [ -f "$out_prot" ] && [ -s "$out_prot" ]; then
+            echo "[$(date)]   ✓ Prodigal completed for $base ($(grep -c '^>' "$out_prot" 2>/dev/null || echo 0) proteins)"
+            protein_files+=("$out_prot")
+            ((bin_count++))
+        else
+            echo "[$(date)]   ✗ Prodigal ran but no proteins generated for $base"
+            ((failed_count++))
+        fi
     else
-        echo "[$(date)]   ✗ Prodigal failed for $base"
+        echo "[$(date)]   ✗ Prodigal failed for $base (check ${PROTEIN_DIR}/${stem}-prodigal.log)"
+        ((failed_count++))
     fi
 done
 
-echo "[$(date)] Prodigal completed for $bin_count bins"
+# Re-enable exit on error
+set -e
+
+echo "[$(date)] Prodigal summary:"
+echo "[$(date)]   Successful: $bin_count bins"
+echo "[$(date)]   Failed: $failed_count bins"
+echo "[$(date)]   Total: $total_bins bins"
 
 if [ ${#protein_files[@]} -eq 0 ]; then
     echo "[$(date)] ERROR: No protein files generated"
