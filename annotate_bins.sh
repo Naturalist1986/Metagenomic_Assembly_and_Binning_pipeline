@@ -11,8 +11,13 @@
 
 set -euo pipefail
 
+# Set default values for variables that config utilities might check
+export SAMPLE_INFO_FILE="${SAMPLE_INFO_FILE:-}"
+export TREATMENTS_FILE="${TREATMENTS_FILE:-}"
+export TOTAL_SAMPLES="${TOTAL_SAMPLES:-0}"
+
 # Source configuration and utilities
-if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
+if [ -n "${PIPELINE_SCRIPT_DIR:-}" ]; then
     source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
 else
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
