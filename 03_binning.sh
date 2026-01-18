@@ -1,13 +1,17 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=binning
 #SBATCH --array=0-99%10
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=64
 #SBATCH --mem=128G
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
+#SBATCH --account=ofinkel
 
-# 03_binning.sh - Metagenomic binning using MetaWRAP binning module
+# 03_binning.sh - Metagenomic binning using MetaBAT2, MaxBin2, and CONCOCT
+# This script runs the 3 binners that were previously wrapped by MetaWRAP binning module
+# Uses shared BAM files created by 03a_create_shared_bams.sh
+# Supports both treatment-level (coassembly) and sample-level (individual assembly) modes
 
 # Source configuration and utilities
 if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
@@ -17,305 +21,475 @@ else
     source "${SCRIPT_DIR}/00_config_utilities.sh"
 fi
 
-# Get sample info from array task ID
-TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
-SAMPLE_INFO=$(get_sample_info_by_index "$TASK_ID")
-if [ -z "$SAMPLE_INFO" ]; then
-    echo "ERROR: No sample found for array index $TASK_ID"
-    exit 1
-fi
+# Set up temporary directory
+TEMP_DIR=$(setup_temp_dir "binning")
 
-# Parse sample information
-IFS='|' read -r SAMPLE_NAME TREATMENT R1_PATH R2_PATH <<< "$SAMPLE_INFO"
-export SAMPLE_NAME TREATMENT
+# ===== FUNCTION DEFINITIONS =====
 
-# Initialize
-init_conda
-create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
-TEMP_DIR=$(setup_temp_dir)
+# Run MetaBAT2
+run_metabat2() {
+    local assembly="$1"
+    local depth_file="$2"
+    local output_dir="$3"
 
-log "====== Starting Binning for $SAMPLE_NAME ($TREATMENT) ======"
+    log "Running MetaBAT2..."
 
-# Check if stage already completed
-if check_sample_checkpoint "$SAMPLE_NAME" "binning"; then
-    log "Binning already completed for $SAMPLE_NAME"
-    cleanup_temp_dir "$TEMP_DIR"
-    exit 0
-fi
+    activate_env metawrap-env
 
-# Main processing function
-stage_binning() {
-    local sample_name="$1"
-    local treatment="$2"
-    
-    log "Running binning for $sample_name ($treatment)"
-    
-    local binning_dir="${OUTPUT_DIR}/binning/${treatment}/${sample_name}"
-    local assembly_dir="${OUTPUT_DIR}/assembly/${treatment}/${sample_name}"
-    local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample_name}"
-    
-    mkdir -p "$binning_dir"
-    
-    # Check if already processed
-    if ls "${binning_dir}"/*_bins/*.fa &>/dev/null 2>&1; then
-        log "Sample $sample_name already binned, skipping..."
-        return 0
+    if ! command -v metabat2 &> /dev/null; then
+        log "ERROR: metabat2 not available"
+        conda deactivate
+        return 1
     fi
-    
-    # Check for input files - assembly
-    local assembly_file=""
+
+    local metabat_dir="${output_dir}/metabat2_bins"
+    mkdir -p "$metabat_dir"
+
+    # MetaBAT2 outputs bins with a prefix
+    metabat2 \
+        -i "$assembly" \
+        -a "$depth_file" \
+        -o "${metabat_dir}/bin" \
+        -t ${SLURM_CPUS_PER_TASK:-64} \
+        -m 1500 \
+        --seed 1 \
+        2>&1 | tee "${LOG_DIR}/${TREATMENT}_metabat2.log"
+
+    local exit_code=${PIPESTATUS[0]}
+    conda deactivate
+
+    if [ $exit_code -eq 0 ]; then
+        local bin_count=$(ls -1 "${metabat_dir}"/bin.*.fa 2>/dev/null | wc -l)
+        log "✓ MetaBAT2 completed: $bin_count bins"
+        return 0
+    else
+        log "✗ MetaBAT2 failed"
+        return 1
+    fi
+}
+
+# Run MaxBin2
+run_maxbin2() {
+    local assembly="$1"
+    local abundance_file="$2"
+    local output_dir="$3"
+
+    log "Running MaxBin2..."
+
+    activate_env metawrap-env
+
+    if ! command -v run_MaxBin.pl &> /dev/null; then
+        log "ERROR: MaxBin2 not available"
+        conda deactivate
+        return 1
+    fi
+
+    local maxbin_dir="${output_dir}/maxbin2_bins"
+    mkdir -p "$maxbin_dir"
+
+    # MaxBin2 needs abundance file in specific format
+    run_MaxBin.pl \
+        -contig "$assembly" \
+        -abund "$abundance_file" \
+        -out "${maxbin_dir}/bin" \
+        -thread ${SLURM_CPUS_PER_TASK:-64} \
+        -min_contig_length 1500 \
+        2>&1 | tee "${LOG_DIR}/${TREATMENT}_maxbin2.log"
+
+    local exit_code=${PIPESTATUS[0]}
+    conda deactivate
+
+    if [ $exit_code -eq 0 ]; then
+        local bin_count=$(ls -1 "${maxbin_dir}"/bin.*.fasta 2>/dev/null | wc -l)
+        # Rename .fasta to .fa for consistency
+        for f in "${maxbin_dir}"/bin.*.fasta; do
+            [ -f "$f" ] && mv "$f" "${f%.fasta}.fa"
+        done
+        log "✓ MaxBin2 completed: $bin_count bins"
+        return 0
+    else
+        log "✗ MaxBin2 failed"
+        return 1
+    fi
+}
+
+# Run CONCOCT
+run_concoct() {
+    local assembly="$1"
+    local bam_files="$2"  # Space-separated list of BAM files
+    local output_dir="$3"
+
+    log "Running CONCOCT..."
+
+    activate_env metawrap-env
+
+    if ! command -v concoct &> /dev/null; then
+        log "ERROR: CONCOCT not available"
+        conda deactivate
+        return 1
+    fi
+
+    local concoct_dir="${output_dir}/concoct_bins"
+    local concoct_work="${TEMP_DIR}/concoct_work"
+    mkdir -p "$concoct_dir"
+    mkdir -p "$concoct_work"
+
+    # Step 1: Cut contigs into smaller pieces
+    log "Cutting contigs for CONCOCT..."
+    cut_up_fasta.py "$assembly" \
+        -c 10000 \
+        -o 0 \
+        --merge_last \
+        -b "${concoct_work}/contigs_10K.bed" \
+        > "${concoct_work}/contigs_10K.fa"
+
+    # Step 2: Generate coverage table from BAM files
+    log "Generating coverage table..."
+    concoct_coverage_table.py \
+        "${concoct_work}/contigs_10K.bed" \
+        $bam_files \
+        > "${concoct_work}/coverage_table.tsv"
+
+    # Step 3: Run CONCOCT
+    log "Running CONCOCT clustering..."
+    concoct \
+        --composition_file "${concoct_work}/contigs_10K.fa" \
+        --coverage_file "${concoct_work}/coverage_table.tsv" \
+        -b "${concoct_work}/concoct_output" \
+        -t ${SLURM_CPUS_PER_TASK:-64} \
+        2>&1 | tee "${LOG_DIR}/${TREATMENT}_concoct.log"
+
+    # Step 4: Merge subcontig clustering into original contigs
+    log "Merging CONCOCT results..."
+    merge_cutup_clustering.py \
+        "${concoct_work}/concoct_output_clustering_gt1000.csv" \
+        > "${concoct_work}/concoct_clustering_merged.csv"
+
+    # Step 5: Extract bins as FASTA files
+    log "Extracting CONCOCT bins..."
+    extract_fasta_bins.py \
+        "$assembly" \
+        "${concoct_work}/concoct_clustering_merged.csv" \
+        --output_path "$concoct_dir"
+
+    local exit_code=$?
+    conda deactivate
+
+    if [ $exit_code -eq 0 ]; then
+        # Rename bins to match naming convention (bin.X.fa)
+        local counter=1
+        for f in "$concoct_dir"/*.fa; do
+            if [ -f "$f" ] && [ "$(basename "$f")" != "bin.${counter}.fa" ]; then
+                mv "$f" "${concoct_dir}/bin.${counter}.fa"
+                ((counter++))
+            fi
+        done
+        local bin_count=$(ls -1 "${concoct_dir}"/bin.*.fa 2>/dev/null | wc -l)
+        log "✓ CONCOCT completed: $bin_count bins"
+        return 0
+    else
+        log "✗ CONCOCT failed"
+        return 1
+    fi
+}
+
+# Generate depth file for MetaBAT2 from BAM files
+generate_depth_file() {
+    local assembly="$1"
+    local bam_dir="$2"
+    local output_file="$3"
+
+    log "Generating depth file for MetaBAT2..."
+
+    activate_env metawrap-env
+
+    # Find all BAM files
+    local bam_files=($(ls "${bam_dir}"/*.sorted.bam 2>/dev/null))
+
+    if [ ${#bam_files[@]} -eq 0 ]; then
+        log "ERROR: No BAM files found in $bam_dir"
+        conda deactivate
+        return 1
+    fi
+
+    log "Found ${#bam_files[@]} BAM files"
+
+    # Use jgi_summarize_bam_contig_depths from MetaBAT2
+    jgi_summarize_bam_contig_depths \
+        --outputDepth "$output_file" \
+        "${bam_files[@]}" \
+        2>&1 | tee "${LOG_DIR}/${TREATMENT}_depth_calculation.log"
+
+    local exit_code=${PIPESTATUS[0]}
+    conda deactivate
+
+    if [ $exit_code -eq 0 ] && [ -f "$output_file" ]; then
+        log "✓ Depth file created: $output_file"
+        return 0
+    else
+        log "✗ Failed to generate depth file"
+        return 1
+    fi
+}
+
+# Generate abundance file for MaxBin2 from depth file
+generate_abundance_file() {
+    local depth_file="$1"
+    local output_file="$2"
+
+    log "Generating abundance file for MaxBin2..."
+
+    # MaxBin2 needs simple tab-separated format: contig_name <tab> abundance
+    # We'll use the mean coverage across all samples
+    awk 'NR>1 {sum=0; for(i=4;i<=NF;i++) sum+=$i; print $1"\t"sum/(NF-3)}' "$depth_file" > "$output_file"
+
+    if [ -f "$output_file" ] && [ -s "$output_file" ]; then
+        log "✓ Abundance file created: $output_file"
+        return 0
+    else
+        log "✗ Failed to generate abundance file"
+        return 1
+    fi
+}
+
+# ===== DETERMINE MODE =====
+
+if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+    # ===== TREATMENT-LEVEL MODE (co-assembly) =====
+    log "Running in TREATMENT-LEVEL mode (co-assembly)"
+
+    TREATMENTS_ARRAY=($(get_treatments))
+    TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
+
+    if [ $TASK_ID -ge ${#TREATMENTS_ARRAY[@]} ]; then
+        log "Array task $TASK_ID has no treatment to process"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 0
+    fi
+
+    TREATMENT="${TREATMENTS_ARRAY[$TASK_ID]}"
+    export TREATMENT
+
+    log "====== Starting Binning for Treatment: $TREATMENT ======"
+
+    binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}"
+    assembly_dir="${OUTPUT_DIR}/coassembly/${TREATMENT}"
+    shared_bam_dir="${binning_dir}/shared_bam_files"
+
+    # Check if shared BAM directory exists
+    if [ ! -d "$shared_bam_dir" ]; then
+        log "ERROR: Shared BAM directory not found: $shared_bam_dir"
+        log "Please run 03a_create_shared_bams.sh first"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
+
+    # Find assembly
+    assembly_fasta=""
+    for possible_file in \
+        "${assembly_dir}/contigs.fasta" \
+        "${assembly_dir}/scaffolds.fasta" \
+        "${assembly_dir}/final_contigs.fasta"; do
+        if [ -f "$possible_file" ]; then
+            assembly_fasta="$possible_file"
+            break
+        fi
+    done
+
+    if [ -z "$assembly_fasta" ]; then
+        log "ERROR: No assembly found in $assembly_dir"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
+
+    log "Assembly: $assembly_fasta"
+    log "Shared BAM directory: $shared_bam_dir"
+
+    # Check for existing bins
+    if [ -d "${binning_dir}/metabat2_bins" ] && \
+       [ -d "${binning_dir}/maxbin2_bins" ] && \
+       [ -d "${binning_dir}/concoct_bins" ]; then
+        log "All three binners already completed for $TREATMENT, skipping..."
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 0
+    fi
+
+    # Generate depth file from shared BAMs
+    depth_file="${TEMP_DIR}/depth.txt"
+    if ! generate_depth_file "$assembly_fasta" "$shared_bam_dir" "$depth_file"; then
+        log "ERROR: Failed to generate depth file"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
+
+    # Generate abundance file from depth file
+    abundance_file="${TEMP_DIR}/abundance.txt"
+    if ! generate_abundance_file "$depth_file" "$abundance_file"; then
+        log "ERROR: Failed to generate abundance file"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
+
+    # Get list of BAM files for CONCOCT
+    bam_files=$(ls "${shared_bam_dir}"/*.sorted.bam 2>/dev/null | tr '\n' ' ')
+
+    # Run the three binners
+    success_count=0
+
+    if [ ! -d "${binning_dir}/metabat2_bins" ]; then
+        if run_metabat2 "$assembly_fasta" "$depth_file" "$binning_dir"; then
+            ((success_count++))
+        fi
+    else
+        log "MetaBAT2 bins already exist, skipping..."
+        ((success_count++))
+    fi
+
+    if [ ! -d "${binning_dir}/maxbin2_bins" ]; then
+        if run_maxbin2 "$assembly_fasta" "$abundance_file" "$binning_dir"; then
+            ((success_count++))
+        fi
+    else
+        log "MaxBin2 bins already exist, skipping..."
+        ((success_count++))
+    fi
+
+    if [ ! -d "${binning_dir}/concoct_bins" ]; then
+        if run_concoct "$assembly_fasta" "$bam_files" "$binning_dir"; then
+            ((success_count++))
+        fi
+    else
+        log "CONCOCT bins already exist, skipping..."
+        ((success_count++))
+    fi
+
+    log "====== Binning Summary ======"
+    log "Successful binners: $success_count/3"
+
+    if [ $success_count -eq 0 ]; then
+        log "ERROR: All binners failed"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
+
+else
+    # ===== SAMPLE-LEVEL MODE (individual assembly) =====
+    log "Running in SAMPLE-LEVEL mode (individual assembly)"
+
+    SAMPLE_INFO=$(get_sample_info_by_index "$SLURM_ARRAY_TASK_ID")
+    if [ -z "$SAMPLE_INFO" ]; then
+        log "ERROR: No sample found for array index $SLURM_ARRAY_TASK_ID"
+        exit 1
+    fi
+
+    IFS='|' read -r SAMPLE_NAME TREATMENT R1_PATH R2_PATH <<< "$SAMPLE_INFO"
+    export SAMPLE_NAME TREATMENT
+
+    create_sample_dirs "$SAMPLE_NAME" "$TREATMENT"
+
+    log "====== Starting Binning for $SAMPLE_NAME ($TREATMENT) ======"
+
+    binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}/${SAMPLE_NAME}"
+    assembly_dir="${OUTPUT_DIR}/assembly/${TREATMENT}/${SAMPLE_NAME}"
+    shared_bam_dir="${binning_dir}/shared_bam_files"
+
+    # Check if shared BAM directory exists
+    if [ ! -d "$shared_bam_dir" ]; then
+        log "ERROR: Shared BAM directory not found: $shared_bam_dir"
+        log "Please run 03a_create_shared_bams.sh first"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
+
+    # Find assembly
+    assembly_fasta=""
     for possible_file in \
         "${assembly_dir}/contigs.fasta" \
         "${assembly_dir}/scaffolds.fasta" \
         "${assembly_dir}/final_contigs.fasta" \
-        "${assembly_dir}/assembly.fasta" \
-        "${assembly_dir}/${sample_name}_contigs.fasta" \
-        "${assembly_dir}/${sample_name}_scaffolds.fasta"; do
-        
-        if [ -f "$possible_file" ] && [ -s "$possible_file" ]; then
-            assembly_file="$possible_file"
-            log "Found assembly file: $assembly_file"
+        "${assembly_dir}/${SAMPLE_NAME}_contigs.fasta"; do
+        if [ -f "$possible_file" ]; then
+            assembly_fasta="$possible_file"
             break
         fi
     done
-    
-    if [ -z "$assembly_file" ]; then
-        log "ERROR: No assembly file found for $sample_name"
-        return 1
-    fi
-    
-    # Check for quality-filtered reads
-    local read1="${quality_dir}/filtered_1.fastq.gz"
-    local read2="${quality_dir}/filtered_2.fastq.gz"
-    
-    if [ ! -f "$read1" ] || [ ! -f "$read2" ]; then
-        log "ERROR: Missing quality-filtered reads for $sample_name"
-        log "  Expected: $read1 and $read2"
-        return 1
-    fi
-    
-    local num_contigs=$(grep -c "^>" "$assembly_file")
-    log "Binning $num_contigs contigs for $sample_name"
-    
-    # Check minimum contig requirement
-    if [ $num_contigs -lt 100 ]; then
-        log "WARNING: Very few contigs ($num_contigs) for binning. Consider increasing assembly quality."
-    fi
-    
-    # Filter contigs by minimum length (1500 bp) for binning
-    local filtered_assembly="${TEMP_DIR}/filtered_contigs.fasta"
-    log "Filtering contigs to minimum length 1500 bp..."
-    
-    awk '/^>/ {if(seq) {if(length(seq) >= 1500) print header "\n" seq}; header=$0; seq=""; next} {seq=seq $0} END {if(seq && length(seq) >= 1500) print header "\n" seq}' "$assembly_file" > "$filtered_assembly"
-    
-    local filtered_contigs=$(grep -c "^>" "$filtered_assembly" 2>/dev/null || echo "0")
-    log "After filtering: $filtered_contigs contigs >= 1500 bp"
-    
-    if [ $filtered_contigs -lt 10 ]; then
-        log "ERROR: Too few contigs >= 1500 bp ($filtered_contigs) for meaningful binning"
-        return 1
-    fi
-    
-    # Prepare reads for MetaWRAP (proper naming convention)
-    local metawrap_reads_dir="${TEMP_DIR}/metawrap_reads"
-    mkdir -p "$metawrap_reads_dir"
-    
-# MetaWRAP expects files ending in 1.fastq and 2.fastq (no underscore, uncompressed)
-local metawrap_r1="${metawrap_reads_dir}/${sample_name}_1.fastq"
-local metawrap_r2="${metawrap_reads_dir}/${sample_name}_2.fastq"
 
-log "Creating uncompressed reads for MetaWRAP..."
-gunzip -c "$read1" > "$metawrap_r1"
-gunzip -c "$read2" > "$metawrap_r2"
-
-log "Created MetaWRAP-compatible read files:"
-log "  R1: $metawrap_r1"
-log "  R2: $metawrap_r2"
-    
-    log "Created MetaWRAP-compatible read files:"
-    log "  R1: $metawrap_r1"
-    log "  R2: $metawrap_r2"
-    
-    # Run MetaWRAP binning
-    if run_metawrap_binning "$filtered_assembly" "$metawrap_r1" "$metawrap_r2" "$binning_dir"; then
-        log "MetaWRAP binning completed successfully"
-        create_binning_summary "$sample_name" "$treatment" "$binning_dir"
-        return 0
-    else
-        log "ERROR: MetaWRAP binning failed for $sample_name"
-        return 1
-    fi
-}
-
-# Run MetaWRAP binning module
-run_metawrap_binning() {
-    local assembly_file="$1"
-    local read1="$2"
-    local read2="$3"
-    local output_dir="$4"
-    
-    log "Running MetaWRAP binning module..."
-    
-    # Activate MetaWRAP environment
-    activate_env metawrap-env
-    
-    # Check if MetaWRAP is available
-    if ! command -v metawrap &> /dev/null; then
-        log "ERROR: MetaWRAP not available"
-        conda deactivate
-        return 1
-    fi
-    
-    # Create temporary output directory for MetaWRAP
-    local metawrap_output="${TEMP_DIR}/metawrap_binning"
-    mkdir -p "$metawrap_output"
-    
-    # Run MetaWRAP binning
-    log "Running MetaWRAP binning command:"
-    log "metawrap binning -o $metawrap_output -t $SLURM_CPUS_PER_TASK -a $assembly_file --metabat2 --maxbin2 --concoct $read1 $read2"
-    
-    metawrap binning \
-        -o "$metawrap_output" \
-        -t $SLURM_CPUS_PER_TASK \
-        -m $((${SLURM_MEM_PER_NODE:-128000} / 1000)) \
-        -l 1500 \
-        -a "$assembly_file" \
-        --metabat2 --maxbin2 --concoct \
-        "$read1" "$read2" \
-        2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_metawrap_binning.log"
-    
-    local exit_code=${PIPESTATUS[0]}
-    
-    # Check results and copy to final output directory
-    if [ $exit_code -eq 0 ] && [ -d "$metawrap_output" ]; then
-        log "MetaWRAP binning completed successfully"
-        
-        # Copy results to final output directory
-        copy_metawrap_results "$metawrap_output" "$output_dir"
-        
-        conda deactivate
-        return 0
-    else
-        log "MetaWRAP binning failed with exit code: $exit_code"
-        conda deactivate
-        return 1
-    fi
-}
-
-# Copy MetaWRAP results to final output directory
-copy_metawrap_results() {
-    local metawrap_output="$1"
-    local final_output="$2"
-    
-    log "Copying MetaWRAP results to final output directory..."
-    
-    # Copy binner outputs
-    for binner in metabat2_bins maxbin2_bins concoct_bins; do
-        if [ -d "${metawrap_output}/${binner}" ]; then
-            cp -r "${metawrap_output}/${binner}" "$final_output/"
-            log "Copied ${binner} results"
-        else
-            log "No results found for ${binner}"
-        fi
-    done
-    
-    # Copy other important files
-    for file in binning_results.txt bin_abundance_table.tab; do
-        if [ -f "${metawrap_output}/${file}" ]; then
-            cp "${metawrap_output}/${file}" "$final_output/"
-            log "Copied ${file}"
-        fi
-    done
-    
-    # Copy log files
-    if [ -d "${metawrap_output}/work_files" ]; then
-        cp -r "${metawrap_output}/work_files" "$final_output/"
-    fi
-}
-
-# Create binning summary
-create_binning_summary() {
-    local sample_name="$1"
-    local treatment="$2"
-    local binning_dir="$3"
-    local summary_file="${binning_dir}/binning_summary.txt"
-    
-    cat > "$summary_file" << EOF
-Binning Summary for $sample_name
-================================
-
-Date: $(date)
-Sample: $sample_name
-Treatment: $treatment
-Tool: MetaWRAP binning module
-
-Results:
-EOF
-    
-    local total_bins=0
-    for binner in metabat2_bins maxbin2_bins concoct_bins; do
-        if [ -d "${binning_dir}/${binner}" ]; then
-            local bin_count=$(ls -1 "${binning_dir}/${binner}"/*.fa 2>/dev/null | wc -l)
-            echo "  $(echo $binner | sed 's/_bins$//'): $bin_count bins" >> "$summary_file"
-            total_bins=$((total_bins + bin_count))
-        else
-            echo "  $(echo $binner | sed 's/_bins$//'): No results" >> "$summary_file"
-        fi
-    done
-    
-    echo "  Total bins: $total_bins" >> "$summary_file"
-    echo "" >> "$summary_file"
-    
-    # Add bin size information
-    echo "Bin Size Information:" >> "$summary_file"
-    for binner in metabat2_bins maxbin2_bins concoct_bins; do
-        if [ -d "${binning_dir}/${binner}" ]; then
-            echo "  $(echo $binner | sed 's/_bins$/') bins:" >> "$summary_file"
-            for bin in "${binning_dir}/${binner}"/*.fa; do
-                if [ -f "$bin" ]; then
-                    local bin_name=$(basename "$bin")
-                    local bin_size=$(grep -v "^>" "$bin" | tr -d '\n' | wc -c)
-                    local contig_count=$(grep -c "^>" "$bin")
-                    echo "    $bin_name: $bin_size bp, $contig_count contigs" >> "$summary_file"
-                fi
-            done
-        fi
-    done
-    
-    log "Binning summary created: $summary_file"
-}
-
-# Validation function
-validate_binning() {
-    local sample_name="$1"
-    local treatment="$2"
-    local binning_dir="${OUTPUT_DIR}/binning/${treatment}/${sample_name}"
-    
-    # Check if at least one binner produced bins
-    for binner in metabat2_bins maxbin2_bins concoct_bins; do
-        if [ -d "${binning_dir}/${binner}" ] && [ "$(ls -A "${binning_dir}/${binner}/"*.fa 2>/dev/null)" ]; then
-            return 0
-        fi
-    done
-    
-    return 1
-}
-
-# Run the binning stage
-if stage_binning "$SAMPLE_NAME" "$TREATMENT"; then
-    # Validate results
-    if validate_binning "$SAMPLE_NAME" "$TREATMENT"; then
-        create_sample_checkpoint "$SAMPLE_NAME" "binning"
-        log "====== Binning completed for $SAMPLE_NAME ======"
-    else
-        log "ERROR: Binning validation failed for $SAMPLE_NAME"
+    if [ -z "$assembly_fasta" ]; then
+        log "ERROR: No assembly found in $assembly_dir"
+        cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
-else
-    log "ERROR: Binning stage failed for $SAMPLE_NAME"
-    cleanup_temp_dir "$TEMP_DIR"
-    exit 1
+
+    log "Assembly: $assembly_fasta"
+    log "Shared BAM directory: $shared_bam_dir"
+
+    # Check for existing bins
+    if [ -d "${binning_dir}/metabat2_bins" ] && \
+       [ -d "${binning_dir}/maxbin2_bins" ] && \
+       [ -d "${binning_dir}/concoct_bins" ]; then
+        log "All three binners already completed for $SAMPLE_NAME, skipping..."
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 0
+    fi
+
+    # Generate depth file from shared BAMs
+    depth_file="${TEMP_DIR}/depth.txt"
+    if ! generate_depth_file "$assembly_fasta" "$shared_bam_dir" "$depth_file"; then
+        log "ERROR: Failed to generate depth file"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
+
+    # Generate abundance file from depth file
+    abundance_file="${TEMP_DIR}/abundance.txt"
+    if ! generate_abundance_file "$depth_file" "$abundance_file"; then
+        log "ERROR: Failed to generate abundance file"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
+
+    # Get list of BAM files for CONCOCT
+    bam_files=$(ls "${shared_bam_dir}"/*.sorted.bam 2>/dev/null | tr '\n' ' ')
+
+    # Run the three binners
+    success_count=0
+
+    if [ ! -d "${binning_dir}/metabat2_bins" ]; then
+        if run_metabat2 "$assembly_fasta" "$depth_file" "$binning_dir"; then
+            ((success_count++))
+        fi
+    else
+        log "MetaBAT2 bins already exist, skipping..."
+        ((success_count++))
+    fi
+
+    if [ ! -d "${binning_dir}/maxbin2_bins" ]; then
+        if run_maxbin2 "$assembly_fasta" "$abundance_file" "$binning_dir"; then
+            ((success_count++))
+        fi
+    else
+        log "MaxBin2 bins already exist, skipping..."
+        ((success_count++))
+    fi
+
+    if [ ! -d "${binning_dir}/concoct_bins" ]; then
+        if run_concoct "$assembly_fasta" "$bam_files" "$binning_dir"; then
+            ((success_count++))
+        fi
+    else
+        log "CONCOCT bins already exist, skipping..."
+        ((success_count++))
+    fi
+
+    log "====== Binning Summary ======"
+    log "Successful binners: $success_count/3"
+
+    if [ $success_count -eq 0 ]; then
+        log "ERROR: All binners failed"
+        cleanup_temp_dir "$TEMP_DIR"
+        exit 1
+    fi
 fi
 
-# Cleanup
 cleanup_temp_dir "$TEMP_DIR"
+log "====== Binning completed successfully ======"

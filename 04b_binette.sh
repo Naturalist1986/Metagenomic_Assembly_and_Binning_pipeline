@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #SBATCH --job-name=binette
 #SBATCH --array=0-99%10
 #SBATCH --nodes=1
@@ -9,8 +9,9 @@
 #SBATCH --account=ofinkel
 
 # 04b_binette.sh - Consensus binning using Binette
-# Combines multiple binning results to produce high-quality consensus bins
-# Replaces DAS Tool when --binette flag is used
+# Combines ALL 5 binners' results to produce high-quality consensus bins
+# Always uses: MetaBAT2, MaxBin2, CONCOCT, COMEBin, and SemiBin
+# Supports both treatment-level (coassembly) and sample-level (individual assembly) modes
 
 # Source configuration and utilities
 if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
@@ -20,14 +21,17 @@ else
     source "${SCRIPT_DIR}/00_config_utilities.sh"
 fi
 
+# Set up temporary directory
+TEMP_DIR=$(setup_temp_dir "binette")
+
 # ===== FUNCTION DEFINITIONS =====
 
 # Run Binette consensus binning
 run_binette() {
     local contigs_file="$1"
-    shift
+    local output_dir="$2"
+    shift 2
     local bin_dirs=("$@")  # Array of bin directories
-    local output_dir="${BINETTE_OUTPUT_DIR}"  # Use global variable for output directory
     local checkm2_db="${CHECKM2_DB:-}"  # Optional: specify CheckM2 database
 
     log "Running Binette consensus binning..."
@@ -46,10 +50,13 @@ run_binette() {
 
     # Build bin_dirs arguments
     local bin_dirs_args=""
+    local valid_count=0
     for bin_dir in "${bin_dirs[@]}"; do
         if [ -d "$bin_dir" ] && [ "$(ls -A ${bin_dir}/*.fa 2>/dev/null)" ]; then
-            log "  Including bin set: $bin_dir"
+            local bin_count=$(ls -1 "${bin_dir}"/*.fa 2>/dev/null | wc -l)
+            log "  Including bin set: $bin_dir ($bin_count bins)"
             bin_dirs_args="$bin_dirs_args --bin_dirs $bin_dir"
+            ((valid_count++))
         else
             log "  WARNING: Skipping empty/missing bin directory: $bin_dir"
         fi
@@ -60,6 +67,8 @@ run_binette() {
         conda deactivate
         return 1
     fi
+
+    log "Using $valid_count bin sets for consensus binning"
 
     mkdir -p "$output_dir"
 
@@ -77,24 +86,20 @@ run_binette() {
         binette_cmd="$binette_cmd --checkm2_db $checkm2_db"
     fi
 
-    # Add low memory flag if needed (for >500 bins)
-    # binette_cmd="$binette_cmd --low_mem"
-
     log "Running Binette command:"
     log "$binette_cmd"
 
-    $binette_cmd 2>&1 | tee "${LOG_DIR}/${TREATMENT}/${SAMPLE_NAME}_binette.log"
+    $binette_cmd 2>&1 | tee "${LOG_DIR}/${TREATMENT}_binette.log"
 
     local exit_code=${PIPESTATUS[0]}
-
     conda deactivate
 
     if [ $exit_code -eq 0 ] && [ -d "${output_dir}/final_bins" ]; then
         local bin_count=$(ls -1 "${output_dir}/final_bins"/*.fa 2>/dev/null | wc -l)
-        log "Binette completed successfully with $bin_count consensus bins"
+        log "✓ Binette completed: $bin_count consensus bins"
         return 0
     else
-        log "Binette failed with exit code: $exit_code"
+        log "✗ Binette failed with exit code: $exit_code"
         return 1
     fi
 }
@@ -102,6 +107,7 @@ run_binette() {
 # Create Binette summary
 create_binette_summary() {
     local binette_dir="$1"
+    local identifier="$2"  # treatment or sample name
     local summary_file="${binette_dir}/binette_summary.txt"
 
     cat > "$summary_file" << EOF
@@ -109,16 +115,15 @@ Binette Consensus Binning Summary
 ==================================
 
 Date: $(date)
-Sample: ${SAMPLE_NAME:-$TREATMENT}
-Treatment: $TREATMENT
+Identifier: $identifier
 Tool: Binette
+Bin sets used: MetaBAT2, MaxBin2, CONCOCT, COMEBin, SemiBin
 
 Results:
 EOF
 
-    local total_bins=0
     if [ -d "${binette_dir}/final_bins" ]; then
-        total_bins=$(ls -1 "${binette_dir}/final_bins"/*.fa 2>/dev/null | wc -l)
+        local total_bins=$(ls -1 "${binette_dir}/final_bins"/*.fa 2>/dev/null | wc -l)
         echo "  Total consensus bins: $total_bins" >> "$summary_file"
         echo "" >> "$summary_file"
 
@@ -147,28 +152,18 @@ EOF
     log "Binette summary created: $summary_file"
 }
 
-# ===== MAIN EXECUTION =====
+# ===== DETERMINE MODE =====
 
-# Initialize
-init_conda
-TEMP_DIR=$(setup_temp_dir)
+if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+    # ===== TREATMENT-LEVEL MODE (co-assembly) =====
+    log "Running in TREATMENT-LEVEL mode (co-assembly)"
 
-# Determine if we're in treatment-level or sample-level mode
-TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
-
-if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
-    # ===== TREATMENT-LEVEL MODE (coassembly) =====
-    log "Running in TREATMENT-LEVEL mode (coassembly)"
-
-    if [ ! -f "$TREATMENTS_FILE" ]; then
-        echo "ERROR: Treatments file not found at: $TREATMENTS_FILE"
-        exit 1
-    fi
-
-    mapfile -t TREATMENTS_ARRAY < "$TREATMENTS_FILE"
+    TREATMENTS_ARRAY=($(get_treatments))
+    TASK_ID=${SLURM_ARRAY_TASK_ID:-0}
 
     if [ $TASK_ID -ge ${#TREATMENTS_ARRAY[@]} ]; then
-        echo "No treatment found for array index $TASK_ID"
+        log "Array task $TASK_ID has no treatment to process"
+        cleanup_temp_dir "$TEMP_DIR"
         exit 0
     fi
 
@@ -177,128 +172,105 @@ if [ "${ASSEMBLY_MODE}" = "coassembly" ]; then
 
     log "====== Starting Binette Consensus Binning for Treatment: $TREATMENT ======"
 
-    # Set up directories
     binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}"
     assembly_dir="${OUTPUT_DIR}/coassembly/${TREATMENT}"
-
-    # Set output directory for Binette
-    BINETTE_OUTPUT_DIR="${OUTPUT_DIR}/bin_refinement/${TREATMENT}/binette"
+    binette_dir="${OUTPUT_DIR}/bin_refinement/${TREATMENT}/binette"
 
     # Check if already processed
-    if [ -d "${BINETTE_OUTPUT_DIR}/final_bins" ] && [ "$(ls -A ${BINETTE_OUTPUT_DIR}/final_bins/*.fa 2>/dev/null)" ]; then
+    if [ -d "${binette_dir}/final_bins" ] && [ "$(ls -A ${binette_dir}/final_bins/*.fa 2>/dev/null)" ]; then
         log "Binette already completed for treatment $TREATMENT, skipping..."
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
     fi
 
-    # Find assembly FASTA
+    # Find assembly
     assembly_fasta=""
     for possible_file in \
         "${assembly_dir}/contigs.fasta" \
         "${assembly_dir}/scaffolds.fasta" \
-        "${assembly_dir}/final_contigs.fasta" \
-        "${assembly_dir}/assembly.fasta"; do
+        "${assembly_dir}/final_contigs.fasta"; do
         if [ -f "$possible_file" ]; then
             assembly_fasta="$possible_file"
-            log "Found assembly: $assembly_fasta"
             break
         fi
     done
 
     if [ -z "$assembly_fasta" ]; then
-        log "ERROR: No assembly FASTA file found"
+        log "ERROR: No assembly found in $assembly_dir"
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
 
-    # Collect bin directories from all sources
+    log "Assembly: $assembly_fasta"
+
+    # Collect ALL 5 bin directories
     bin_dirs_array=()
 
-    # Decide whether to use refined or original bins
-    if [ "$BINETTE_USE_REFINED" = "true" ]; then
-        log "Using BinSPreader-refined bins for consensus binning"
-        log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}, BINETTE_USE_REFINED=${BINETTE_USE_REFINED}"
+    log "Collecting bin directories from all 5 binners..."
 
-        # Use refined COMEBin bins if available
-        if [ "$USE_COMEBIN" = "true" ]; then
-            if [ -d "${binning_dir}/binspreader/comebin_refined" ]; then
-                log "Adding BinSPreader-refined COMEBin bins: ${binning_dir}/binspreader/comebin_refined"
-                bin_dirs_array+=("${binning_dir}/binspreader/comebin_refined")
-            elif [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-                log "Refined bins not found, using original COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-                log "Refined bins not found, using original COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-            else
-                log "COMEBin enabled but bins not found"
-            fi
-        fi
-
-        # Use refined SemiBin bins if available
-        if [ "$USE_SEMIBIN" = "true" ]; then
-            if [ -d "${binning_dir}/binspreader/semibin_refined" ]; then
-                log "Adding BinSPreader-refined SemiBin bins: ${binning_dir}/binspreader/semibin_refined"
-                bin_dirs_array+=("${binning_dir}/binspreader/semibin_refined")
-            elif [ -d "${binning_dir}/semibin/output_bins" ]; then
-                log "Refined bins not found, using original SemiBin bins: ${binning_dir}/semibin/output_bins"
-                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
-            else
-                log "SemiBin enabled but bins not found"
-            fi
-        fi
+    # 1. MetaBAT2 bins
+    if [ -d "${binning_dir}/metabat2_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/metabat2_bins")
+        log "  Found MetaBAT2 bins"
     else
-        log "Using original bins for consensus binning"
-        log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}, BINETTE_USE_REFINED=${BINETTE_USE_REFINED}"
-
-        if [ "$USE_COMEBIN" = "true" ]; then
-            if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-                log "Adding COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-                log "Adding COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-            else
-                log "COMEBin enabled but bins not found at:"
-                log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-                log "  - ${binning_dir}/comebin/comebin_res_bins"
-            fi
-        else
-            log "COMEBin not enabled (USE_COMEBIN=${USE_COMEBIN})"
-        fi
-
-        if [ "$USE_SEMIBIN" = "true" ]; then
-            if [ -d "${binning_dir}/semibin/output_bins" ]; then
-                log "Adding SemiBin bins: ${binning_dir}/semibin/output_bins"
-                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
-            else
-                log "SemiBin enabled but bins not found at: ${binning_dir}/semibin/output_bins"
-            fi
-        else
-            log "SemiBin not enabled (USE_SEMIBIN=${USE_SEMIBIN})"
-        fi
+        log "  WARNING: MetaBAT2 bins not found at ${binning_dir}/metabat2_bins"
     fi
 
-    # Only use MetaWRAP if neither COMEBin nor SemiBin are enabled
-    if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ]; then
-        if [ -d "${binning_dir}/metawrap_bins" ]; then
-            log "Adding MetaWRAP bins"
-            bin_dirs_array+=("${binning_dir}/metawrap_bins")
-        fi
+    # 2. MaxBin2 bins
+    if [ -d "${binning_dir}/maxbin2_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/maxbin2_bins")
+        log "  Found MaxBin2 bins"
+    else
+        log "  WARNING: MaxBin2 bins not found at ${binning_dir}/maxbin2_bins"
+    fi
+
+    # 3. CONCOCT bins
+    if [ -d "${binning_dir}/concoct_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/concoct_bins")
+        log "  Found CONCOCT bins"
+    else
+        log "  WARNING: CONCOCT bins not found at ${binning_dir}/concoct_bins"
+    fi
+
+    # 4. COMEBin bins
+    if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+        log "  Found COMEBin bins"
+    elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+        log "  Found COMEBin bins (legacy path)"
+    else
+        log "  WARNING: COMEBin bins not found"
+    fi
+
+    # 5. SemiBin bins
+    if [ -d "${binning_dir}/semibin/output_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+        log "  Found SemiBin bins"
+    else
+        log "  WARNING: SemiBin bins not found at ${binning_dir}/semibin/output_bins"
     fi
 
     if [ ${#bin_dirs_array[@]} -eq 0 ]; then
-        log "ERROR: No bin directories found for consensus binning"
+        log "ERROR: No bin directories found from any of the 5 binners"
+        log "Expected locations:"
+        log "  - ${binning_dir}/metabat2_bins"
+        log "  - ${binning_dir}/maxbin2_bins"
+        log "  - ${binning_dir}/concoct_bins"
+        log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+        log "  - ${binning_dir}/semibin/output_bins"
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
 
-    # Run Binette
-    if run_binette "$assembly_fasta" "${bin_dirs_array[@]}"; then
-        create_binette_summary "${BINETTE_OUTPUT_DIR}"
+    log "Found ${#bin_dirs_array[@]} bin sets for consensus binning"
+
+    # Run Binette with all available bin sets
+    if run_binette "$assembly_fasta" "$binette_dir" "${bin_dirs_array[@]}"; then
+        create_binette_summary "$binette_dir" "$TREATMENT"
         log "====== Binette completed for treatment $TREATMENT ======"
     else
-        log "ERROR: Binette failed"
+        log "ERROR: Binette failed for treatment $TREATMENT"
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
@@ -307,9 +279,9 @@ else
     # ===== SAMPLE-LEVEL MODE (individual assembly) =====
     log "Running in SAMPLE-LEVEL mode (individual assembly)"
 
-    SAMPLE_INFO=$(get_sample_info_by_index "$TASK_ID")
+    SAMPLE_INFO=$(get_sample_info_by_index "$SLURM_ARRAY_TASK_ID")
     if [ -z "$SAMPLE_INFO" ]; then
-        echo "ERROR: No sample found for array index $TASK_ID"
+        log "ERROR: No sample found for array index $SLURM_ARRAY_TASK_ID"
         exit 1
     fi
 
@@ -320,134 +292,110 @@ else
 
     log "====== Starting Binette Consensus Binning for $SAMPLE_NAME ($TREATMENT) ======"
 
-    # Set up directories
     binning_dir="${OUTPUT_DIR}/binning/${TREATMENT}/${SAMPLE_NAME}"
     assembly_dir="${OUTPUT_DIR}/assembly/${TREATMENT}/${SAMPLE_NAME}"
-
-    # Set output directory for Binette
-    BINETTE_OUTPUT_DIR="${OUTPUT_DIR}/bin_refinement/${TREATMENT}/${SAMPLE_NAME}/binette"
+    binette_dir="${OUTPUT_DIR}/bin_refinement/${TREATMENT}/${SAMPLE_NAME}/binette"
 
     # Check if already processed
-    if [ -d "${BINETTE_OUTPUT_DIR}/final_bins" ] && [ "$(ls -A ${BINETTE_OUTPUT_DIR}/final_bins/*.fa 2>/dev/null)" ]; then
+    if [ -d "${binette_dir}/final_bins" ] && [ "$(ls -A ${binette_dir}/final_bins/*.fa 2>/dev/null)" ]; then
         log "Binette already completed for $SAMPLE_NAME, skipping..."
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
     fi
 
-    # Find assembly FASTA
+    # Find assembly
     assembly_fasta=""
     for possible_file in \
         "${assembly_dir}/contigs.fasta" \
         "${assembly_dir}/scaffolds.fasta" \
         "${assembly_dir}/final_contigs.fasta" \
-        "${assembly_dir}/assembly.fasta" \
-        "${assembly_dir}/${SAMPLE_NAME}_contigs.fasta" \
-        "${assembly_dir}/${SAMPLE_NAME}_scaffolds.fasta"; do
+        "${assembly_dir}/${SAMPLE_NAME}_contigs.fasta"; do
         if [ -f "$possible_file" ]; then
             assembly_fasta="$possible_file"
-            log "Found assembly: $assembly_fasta"
             break
         fi
     done
 
     if [ -z "$assembly_fasta" ]; then
-        log "ERROR: No assembly FASTA file found"
+        log "ERROR: No assembly found in $assembly_dir"
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
 
-    # Collect bin directories from all sources
+    log "Assembly: $assembly_fasta"
+
+    # Collect ALL 5 bin directories
     bin_dirs_array=()
 
-    # Decide whether to use refined or original bins
-    if [ "$BINETTE_USE_REFINED" = "true" ]; then
-        log "Using BinSPreader-refined bins for consensus binning"
-        log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}, BINETTE_USE_REFINED=${BINETTE_USE_REFINED}"
+    log "Collecting bin directories from all 5 binners..."
 
-        # Use refined COMEBin bins if available
-        if [ "$USE_COMEBIN" = "true" ]; then
-            if [ -d "${binning_dir}/binspreader/comebin_refined" ]; then
-                log "Adding BinSPreader-refined COMEBin bins: ${binning_dir}/binspreader/comebin_refined"
-                bin_dirs_array+=("${binning_dir}/binspreader/comebin_refined")
-            elif [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-                log "Refined bins not found, using original COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-                log "Refined bins not found, using original COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-            else
-                log "COMEBin enabled but bins not found"
-            fi
-        fi
-
-        # Use refined SemiBin bins if available
-        if [ "$USE_SEMIBIN" = "true" ]; then
-            if [ -d "${binning_dir}/binspreader/semibin_refined" ]; then
-                log "Adding BinSPreader-refined SemiBin bins: ${binning_dir}/binspreader/semibin_refined"
-                bin_dirs_array+=("${binning_dir}/binspreader/semibin_refined")
-            elif [ -d "${binning_dir}/semibin/output_bins" ]; then
-                log "Refined bins not found, using original SemiBin bins: ${binning_dir}/semibin/output_bins"
-                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
-            else
-                log "SemiBin enabled but bins not found"
-            fi
-        fi
+    # 1. MetaBAT2 bins
+    if [ -d "${binning_dir}/metabat2_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/metabat2_bins")
+        log "  Found MetaBAT2 bins"
     else
-        log "Using original bins for consensus binning"
-        log "USE_COMEBIN=${USE_COMEBIN}, USE_SEMIBIN=${USE_SEMIBIN}, BINETTE_USE_REFINED=${BINETTE_USE_REFINED}"
-
-        if [ "$USE_COMEBIN" = "true" ]; then
-            if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
-                log "Adding COMEBin bins: ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
-            elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
-                log "Adding COMEBin bins (legacy path): ${binning_dir}/comebin/comebin_res_bins"
-                bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
-            else
-                log "COMEBin enabled but bins not found at:"
-                log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
-                log "  - ${binning_dir}/comebin/comebin_res_bins"
-            fi
-        else
-            log "COMEBin not enabled (USE_COMEBIN=${USE_COMEBIN})"
-        fi
-
-        if [ "$USE_SEMIBIN" = "true" ]; then
-            if [ -d "${binning_dir}/semibin/output_bins" ]; then
-                log "Adding SemiBin bins: ${binning_dir}/semibin/output_bins"
-                bin_dirs_array+=("${binning_dir}/semibin/output_bins")
-            else
-                log "SemiBin enabled but bins not found at: ${binning_dir}/semibin/output_bins"
-            fi
-        else
-            log "SemiBin not enabled (USE_SEMIBIN=${USE_SEMIBIN})"
-        fi
+        log "  WARNING: MetaBAT2 bins not found at ${binning_dir}/metabat2_bins"
     fi
 
-    # Only use MetaWRAP if neither COMEBin nor SemiBin are enabled
-    if [ "$USE_COMEBIN" != "true" ] && [ "$USE_SEMIBIN" != "true" ]; then
-        if [ -d "${binning_dir}/metawrap_50_10_bins" ]; then
-            log "Adding MetaWRAP bins"
-            bin_dirs_array+=("${binning_dir}/metawrap_50_10_bins")
-        fi
+    # 2. MaxBin2 bins
+    if [ -d "${binning_dir}/maxbin2_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/maxbin2_bins")
+        log "  Found MaxBin2 bins"
+    else
+        log "  WARNING: MaxBin2 bins not found at ${binning_dir}/maxbin2_bins"
+    fi
+
+    # 3. CONCOCT bins
+    if [ -d "${binning_dir}/concoct_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/concoct_bins")
+        log "  Found CONCOCT bins"
+    else
+        log "  WARNING: CONCOCT bins not found at ${binning_dir}/concoct_bins"
+    fi
+
+    # 4. COMEBin bins
+    if [ -d "${binning_dir}/comebin/comebin_res/comebin_res_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/comebin/comebin_res/comebin_res_bins")
+        log "  Found COMEBin bins"
+    elif [ -d "${binning_dir}/comebin/comebin_res_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/comebin/comebin_res_bins")
+        log "  Found COMEBin bins (legacy path)"
+    else
+        log "  WARNING: COMEBin bins not found"
+    fi
+
+    # 5. SemiBin bins
+    if [ -d "${binning_dir}/semibin/output_bins" ]; then
+        bin_dirs_array+=("${binning_dir}/semibin/output_bins")
+        log "  Found SemiBin bins"
+    else
+        log "  WARNING: SemiBin bins not found at ${binning_dir}/semibin/output_bins"
     fi
 
     if [ ${#bin_dirs_array[@]} -eq 0 ]; then
-        log "ERROR: No bin directories found for consensus binning"
+        log "ERROR: No bin directories found from any of the 5 binners"
+        log "Expected locations:"
+        log "  - ${binning_dir}/metabat2_bins"
+        log "  - ${binning_dir}/maxbin2_bins"
+        log "  - ${binning_dir}/concoct_bins"
+        log "  - ${binning_dir}/comebin/comebin_res/comebin_res_bins"
+        log "  - ${binning_dir}/semibin/output_bins"
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
 
-    # Run Binette
-    if run_binette "$assembly_fasta" "${bin_dirs_array[@]}"; then
-        create_binette_summary "${BINETTE_OUTPUT_DIR}"
+    log "Found ${#bin_dirs_array[@]} bin sets for consensus binning"
+
+    # Run Binette with all available bin sets
+    if run_binette "$assembly_fasta" "$binette_dir" "${bin_dirs_array[@]}"; then
+        create_binette_summary "$binette_dir" "$SAMPLE_NAME"
         log "====== Binette completed for $SAMPLE_NAME ======"
     else
-        log "ERROR: Binette failed"
+        log "ERROR: Binette failed for $SAMPLE_NAME"
         cleanup_temp_dir "$TEMP_DIR"
         exit 1
     fi
 fi
 
-# Cleanup
 cleanup_temp_dir "$TEMP_DIR"
+log "====== Binette completed successfully ======"
