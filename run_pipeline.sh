@@ -13,8 +13,7 @@ SPECIFIC_TREATMENTS=()
 SPECIFIC_SAMPLES=()
 ASSEMBLY_MODE="individual"
 TREATMENT_LEVEL_BINNING=false
-USE_COMEBIN=false  # Use COMEBin for binning instead of MetaWRAP
-USE_SEMIBIN=false  # Use SemiBin2 for binning instead of MetaWRAP
+# Note: All 5 binners (MetaBAT2, MaxBin2, CONCOCT, COMEBin, SemiBin) now run automatically in stage 3
 PER_SAMPLE_CROSS_MAPPING=false  # Map all samples in treatment to each sample's assembly
 USE_BINSPREADER=false  # Use BinSPreader for graph-aware bin refinement
 USE_BINETTE=false  # Use Binette for consensus binning (replaces DAS Tool)
@@ -36,8 +35,6 @@ OPTIONS:
     -e, --end-stage NUM           End at stage NUM (0 to 9) [default: 9]
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
-    --comebin                     Use COMEBin for binning instead of MetaWRAP (requires comebin conda env)
-    --semibin                     Use SemiBin2 for binning instead of MetaWRAP (requires semibin conda env)
     --per-sample-cross-mapping    Map all treatment samples to each sample's assembly (individual mode only)
     --binspreader                 Use BinSPreader for graph-aware bin refinement (requires assembly graph)
     --binette                     Use Binette for consensus binning instead of DAS Tool (requires binette env)
@@ -87,11 +84,11 @@ STAGES:
     0  - Quality Filtering (Trimmomatic)
     1  - Validation & Repair (validates paired-end sync, repairs if needed)
     2  - Assembly (MetaSPAdes - individual or co-assembly)
-    3  - Binning (MetaWRAP or COMEBin - sample/treatment-level based on flags)
-    4  - Bin Refinement (DAS Tool - sample-level or treatment-level based on -b flag)
-    5  - Bin Reassembly (MetaWRAP - sample-level or treatment-level based on -b flag)
-    6  - MAGpurify (contamination removal - sample-level or treatment-level based on -b flag)
-    7  - CheckM2 (quality assessment - sample-level or treatment-level based on -b flag)
+    3  - Unified Binning (ALL 5 binners: MetaBAT2, MaxBin2, CONCOCT, COMEBin, SemiBin)
+    4  - Consensus Binning (Binette - combines all 5 bin sets for high-quality MAGs)
+    5  - Bin Reassembly (MetaWRAP - refines bins through reassembly)
+    6  - MAGpurify (contamination removal)
+    7  - CheckM2 (quality assessment)
     8  - Bin Selection (selects best reassembly version: orig/strict/permissive)
     9  - Bin Collection (per treatment: collects selected bins, runs CoverM & GTDB-Tk)
 
@@ -111,19 +108,7 @@ BINNING MODES:
     - Useful for co-assembly workflows or when you want bins across replicates
     - Uses 03_binning_treatment_level.sh instead of 03_binning.sh
 
-    Use --comebin to use COMEBin for binning instead of MetaWRAP:
-    - Uses contrastive multi-view representation learning
-    - Requires 'comebin' conda environment
-    - Uses BAM files from MetaWRAP work_files or creates them with bowtie2
-    - Uses 03b_comebin.sh instead of standard binning scripts
-
-    Use --semibin to use SemiBin2 for binning instead of MetaWRAP:
-    - Uses deep learning with self-supervised learning
-    - Requires 'semibin' conda environment
-    - Creates BAM files with bowtie2 if needed
-    - Uses 03c_semibin.sh instead of standard binning scripts
-
-    Use --per-sample-cross-mapping with --comebin/--semibin and -a individual:
+    Use --per-sample-cross-mapping with -a individual:
     - Performs individual assembly per sample
     - Maps ALL samples in treatment to EACH sample's assembly
     - Creates bins using multi-sample coverage information
@@ -167,26 +152,16 @@ EXAMPLES:
     $0 --assembly-mode coassembly --treatment-level-binning \\
        -i /path/to/fastq -o /path/to/output
 
-    # Use COMEBin for binning instead of MetaWRAP
-    $0 --comebin -i /path/to/fastq -o /path/to/output
-
-    # Use SemiBin2 for binning instead of MetaWRAP
-    $0 --semibin -i /path/to/fastq -o /path/to/output
-
     # Per-sample assembly with cross-sample mapping (all samples map to each assembly)
-    $0 -a individual --comebin --per-sample-cross-mapping \\
+    $0 -a individual --per-sample-cross-mapping \\
        -i /path/to/fastq -o /path/to/output
 
-    # Per-sample assembly with cross-sample mapping using SemiBin2
-    $0 -a individual --semibin --per-sample-cross-mapping \\
-       -i /path/to/fastq -o /path/to/output
-
-    # Advanced binning with graph-aware refinement and consensus
-    $0 --semibin --binspreader --binette --gunc \\
+    # Advanced binning with graph-aware refinement
+    $0 --binspreader --binette --gunc \\
        -i /path/to/fastq -o /path/to/output
 
     # Nodule metagenomics: cross-sample mapping + full QC pipeline
-    $0 -a individual --semibin --per-sample-cross-mapping \\
+    $0 -a individual --per-sample-cross-mapping \\
        --binspreader --binette --gunc \\
        -i /path/to/fastq -o /path/to/output
 
@@ -588,14 +563,13 @@ get_binning_script() {
 
 # Function to get the correct refinement script based on flags
 get_refinement_script() {
-    # When both BinSPreader and Binette are enabled, run BinSPreader first
-    # Then Binette will be inserted after stage 4 automatically
+    # Binette is now the default for stage 4 (uses all 5 bin sets)
+    # BinSPreader is optional and handled separately if enabled
     if [ "$USE_BINSPREADER" = true ]; then
         echo "04c_binspreader.sh"
-    elif [ "$USE_BINETTE" = true ]; then
-        echo "04b_binette.sh"
     else
-        echo "04_bin_refinement.sh"
+        # Default to Binette for consensus binning of all 5 binners
+        echo "04b_binette.sh"
     fi
 }
 
@@ -611,57 +585,29 @@ STAGE_SCRIPTS[4]=$(get_refinement_script)
 # Update stage names to reflect modes
 if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
     STAGE_NAMES[2]="Co-Assembly (per treatment)"
-else
-    STAGE_NAMES[2]="Assembly (per sample)"
-fi
-
-if [ "$USE_COMEBIN" = true ]; then
-    if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
-        STAGE_NAMES[3]="Binning (COMEBin - treatment-level)"
-    else
-        STAGE_NAMES[3]="Binning (COMEBin - sample-level)"
-    fi
-    STAGE_NAMES[4]="Bin Refinement (sample-level)"
-    STAGE_NAMES[5]="Bin Reassembly (sample-level)"
-    STAGE_NAMES[6]="MAGpurify (sample-level)"
-    STAGE_NAMES[7]="CheckM2 (sample-level)"
-    STAGE_NAMES[8]="Bin Selection (sample-level)"
-elif [ "$USE_SEMIBIN" = true ]; then
-    if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
-        STAGE_NAMES[3]="Binning (SemiBin2 - treatment-level)"
-    else
-        STAGE_NAMES[3]="Binning (SemiBin2 - sample-level)"
-    fi
-    STAGE_NAMES[4]="Bin Refinement (sample-level)"
-    STAGE_NAMES[5]="Bin Reassembly (sample-level)"
-    STAGE_NAMES[6]="MAGpurify (sample-level)"
-    STAGE_NAMES[7]="CheckM2 (sample-level)"
-    STAGE_NAMES[8]="Bin Selection (sample-level)"
-elif [ "$TREATMENT_LEVEL_BINNING" = true ]; then
-    STAGE_NAMES[3]="Binning (treatment-level)"
-    STAGE_NAMES[4]="Bin Refinement (treatment-level)"
+    STAGE_NAMES[3]="Unified Binning (5 binners - treatment-level)"
+    STAGE_NAMES[4]="Consensus Binning (Binette - treatment-level)"
     STAGE_NAMES[5]="Bin Reassembly (treatment-level)"
     STAGE_NAMES[6]="MAGpurify (treatment-level)"
     STAGE_NAMES[7]="CheckM2 (treatment-level)"
     STAGE_NAMES[8]="Bin Selection (treatment-level)"
 else
-    STAGE_NAMES[3]="Binning (sample-level)"
-    STAGE_NAMES[4]="Bin Refinement (sample-level)"
+    STAGE_NAMES[2]="Assembly (per sample)"
+    STAGE_NAMES[3]="Unified Binning (5 binners - sample-level)"
+    STAGE_NAMES[4]="Consensus Binning (Binette - sample-level)"
     STAGE_NAMES[5]="Bin Reassembly (sample-level)"
     STAGE_NAMES[6]="MAGpurify (sample-level)"
     STAGE_NAMES[7]="CheckM2 (sample-level)"
     STAGE_NAMES[8]="Bin Selection (sample-level)"
 fi
 
-# Update stage 4 name based on refinement tool
-if [ "$USE_BINSPREADER" = true ] && [ "$USE_BINETTE" = true ]; then
-    STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - BinSPreader + Binette)"
-elif [ "$USE_BINSPREADER" = true ]; then
-    STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - BinSPreader)"
-elif [ "$USE_BINETTE" = true ]; then
-    STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - Binette)"
-else
-    STAGE_NAMES[4]="${STAGE_NAMES[4]%)*} - DAS Tool)"
+# Update stage 4 name if BinSPreader is used (optional refinement step)
+if [ "$USE_BINSPREADER" = true ]; then
+    if [ "$ASSEMBLY_MODE" = "coassembly" ]; then
+        STAGE_NAMES[4]="Bin Refinement (BinSPreader + Binette - treatment-level)"
+    else
+        STAGE_NAMES[4]="Bin Refinement (BinSPreader + Binette - sample-level)"
+    fi
 fi
 
 # Function to check if filters match any samples
@@ -1324,6 +1270,164 @@ done
 for stage in "${STAGES_TO_RUN[@]}"; do
     echo "📄 Processing stage $stage: ${STAGE_NAMES[$stage]}"
 
+    # Special handling for stage 3: Run unified binning workflow
+    if [ "$stage" = "3" ]; then
+        # Stage 3a: Create shared BAM files
+        echo "  Step 1: Creating shared BAM files (03a_create_shared_bams.sh)"
+
+        bam_script="03a_create_shared_bams.sh"
+        slurm_log_dir="${OUTPUT_DIR}/logs/slurm"
+
+        array_size=$(calculate_array_size 3)
+
+        if [ $array_size -gt 0 ]; then
+            cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
+            cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
+            cmd+=",TREATMENTS_FILE=${TREATMENTS_FILE},SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE}"
+            cmd+=",SLURM_ACCOUNT=${SLURM_ACCOUNT}"
+
+            if [ -n "$previous_job_id" ]; then
+                cmd+=" --dependency=afterok:${previous_job_id}"
+            fi
+
+            if [ -n "$SLURM_ACCOUNT" ]; then
+                cmd+=" --account=${SLURM_ACCOUNT}"
+            fi
+
+            script_basename=$(basename -- "$bam_script" .sh)
+            cmd+=" --output=${slurm_log_dir}/${script_basename}_%A_%a.log"
+            cmd+=" --error=${slurm_log_dir}/${script_basename}_%A_%a.err"
+
+            if [ $array_size -gt 1 ]; then
+                indices=($(get_filtered_indices 3))
+                if [ ${#indices[@]} -gt 0 ]; then
+                    array_str=""
+                    for i in "${indices[@]}"; do
+                        if [ -z "$array_str" ]; then
+                            array_str="$i"
+                        else
+                            array_str="$array_str,$i"
+                        fi
+                    done
+                    cmd+=" --array=${array_str}"
+                fi
+            elif [ $array_size -eq 1 ]; then
+                indices=($(get_filtered_indices 3))
+                if [ ${#indices[@]} -gt 0 ]; then
+                    cmd+=" --array=${indices[0]}"
+                fi
+            fi
+
+            cmd+=" ${SCRIPT_DIR}/${bam_script}"
+
+            if [ "$DRY_RUN" = true ]; then
+                echo "  🔍 [DRY RUN] Would execute: $cmd"
+                bam_job_id="999999"
+            else
+                echo "  🚀 Submitting BAM creation job"
+                echo "     Command: $cmd"
+                result=$($cmd 2>&1)
+                if [[ $result =~ Submitted\ batch\ job\ ([0-9]+) ]]; then
+                    bam_job_id="${BASH_REMATCH[1]}"
+                    echo "  ✅ Submitted BAM creation job $bam_job_id"
+                    ((jobs_submitted++))
+                else
+                    echo "  ❌ Error submitting BAM creation job: $result"
+                    exit 1
+                fi
+            fi
+        else
+            echo "  ⚠️  No samples/treatments to process for BAM creation"
+            bam_job_id=""
+        fi
+
+        # Stage 3b: Run all 3 binners in parallel (depend on BAM creation)
+        echo "  Step 2: Running all 5 binners (MetaBAT2, MaxBin2, CONCOCT, COMEBin, SemiBin)"
+
+        binner_scripts=("03_binning.sh" "03b_comebin.sh" "03c_semibin.sh")
+        binner_names=("MetaBAT2/MaxBin2/CONCOCT" "COMEBin" "SemiBin")
+        binner_job_ids=()
+
+        for i in "${!binner_scripts[@]}"; do
+            binner_script="${binner_scripts[$i]}"
+            binner_name="${binner_names[$i]}"
+
+            echo "    Running $binner_name ($binner_script)..."
+
+            if [ $array_size -gt 0 ]; then
+                cmd="sbatch --export=ALL,OUTPUT_DIR=${OUTPUT_DIR},INPUT_DIR=${INPUT_DIR},WORK_DIR=${WORK_DIR}"
+                cmd+=",PIPELINE_SCRIPT_DIR=${PIPELINE_SCRIPT_DIR},ASSEMBLY_MODE=${ASSEMBLY_MODE}"
+                cmd+=",TREATMENTS_FILE=${TREATMENTS_FILE},SAMPLE_INFO_FILE=${SAMPLE_INFO_FILE}"
+                cmd+=",SLURM_ACCOUNT=${SLURM_ACCOUNT}"
+
+                # Depend on BAM creation job
+                if [ -n "$bam_job_id" ]; then
+                    cmd+=" --dependency=afterok:${bam_job_id}"
+                fi
+
+                if [ -n "$SLURM_ACCOUNT" ]; then
+                    cmd+=" --account=${SLURM_ACCOUNT}"
+                fi
+
+                script_basename=$(basename -- "$binner_script" .sh)
+                cmd+=" --output=${slurm_log_dir}/${script_basename}_%A_%a.log"
+                cmd+=" --error=${slurm_log_dir}/${script_basename}_%A_%a.err"
+
+                if [ $array_size -gt 1 ]; then
+                    indices=($(get_filtered_indices 3))
+                    if [ ${#indices[@]} -gt 0 ]; then
+                        array_str=""
+                        for idx in "${indices[@]}"; do
+                            if [ -z "$array_str" ]; then
+                                array_str="$idx"
+                            else
+                                array_str="$array_str,$idx"
+                            fi
+                        done
+                        cmd+=" --array=${array_str}"
+                    fi
+                elif [ $array_size -eq 1 ]; then
+                    indices=($(get_filtered_indices 3))
+                    if [ ${#indices[@]} -gt 0 ]; then
+                        cmd+=" --array=${indices[0]}"
+                    fi
+                fi
+
+                cmd+=" ${SCRIPT_DIR}/${binner_script}"
+
+                if [ "$DRY_RUN" = true ]; then
+                    echo "    🔍 [DRY RUN] Would execute: $cmd"
+                    binner_job_ids+=("999999")
+                else
+                    echo "    🚀 Submitting $binner_name"
+                    result=$($cmd 2>&1)
+                    if [[ $result =~ Submitted\ batch\ job\ ([0-9]+) ]]; then
+                        job_id="${BASH_REMATCH[1]}"
+                        echo "    ✅ Submitted $binner_name job $job_id"
+                        binner_job_ids+=("$job_id")
+                        ((jobs_submitted++))
+                    else
+                        echo "    ❌ Error submitting $binner_name job: $result"
+                        exit 1
+                    fi
+                fi
+            fi
+        done
+
+        # Set previous_job_id to all binner jobs (for stage 4 dependency)
+        if [ ${#binner_job_ids[@]} -gt 0 ]; then
+            # Join all job IDs with ":"
+            previous_job_id="${binner_job_ids[0]}"
+            for ((i=1; i<${#binner_job_ids[@]}; i++)); do
+                previous_job_id="${previous_job_id}:${binner_job_ids[$i]}"
+            done
+        fi
+
+        echo ""
+        continue
+    fi
+
+    # Normal stage submission for non-stage-3 stages
     job_id=$(submit_job "$stage" "$previous_job_id")
 
     if [ -z "$job_id" ] || [ "$job_id" = "0" ]; then
