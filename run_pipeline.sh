@@ -13,8 +13,7 @@ SPECIFIC_TREATMENTS=()
 SPECIFIC_SAMPLES=()
 ASSEMBLY_MODE="individual"
 TREATMENT_LEVEL_BINNING=false
-USE_COMEBIN=false  # Use COMEBin for binning instead of MetaWRAP
-USE_SEMIBIN=false  # Use SemiBin2 for binning instead of MetaWRAP
+# Note: All 5 binners (MetaBAT2, MaxBin2, CONCOCT, COMEBin, SemiBin) now run automatically in stage 3
 PER_SAMPLE_CROSS_MAPPING=false  # Map all samples in treatment to each sample's assembly
 USE_BINSPREADER=false  # Use BinSPreader for graph-aware bin refinement
 USE_BINETTE=false  # Use Binette for consensus binning (replaces DAS Tool)
@@ -36,8 +35,6 @@ OPTIONS:
     -e, --end-stage NUM           End at stage NUM (0 to 9) [default: 9]
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
-    --comebin                     Use COMEBin for binning instead of MetaWRAP (requires comebin conda env)
-    --semibin                     Use SemiBin2 for binning instead of MetaWRAP (requires semibin conda env)
     --per-sample-cross-mapping    Map all treatment samples to each sample's assembly (individual mode only)
     --binspreader                 Use BinSPreader for graph-aware bin refinement (requires assembly graph)
     --binette                     Use Binette for consensus binning instead of DAS Tool (requires binette env)
@@ -111,19 +108,7 @@ BINNING MODES:
     - Useful for co-assembly workflows or when you want bins across replicates
     - Uses 03_binning_treatment_level.sh instead of 03_binning.sh
 
-    Use --comebin to use COMEBin for binning instead of MetaWRAP:
-    - Uses contrastive multi-view representation learning
-    - Requires 'comebin' conda environment
-    - Uses BAM files from MetaWRAP work_files or creates them with bowtie2
-    - Uses 03b_comebin.sh instead of standard binning scripts
-
-    Use --semibin to use SemiBin2 for binning instead of MetaWRAP:
-    - Uses deep learning with self-supervised learning
-    - Requires 'semibin' conda environment
-    - Creates BAM files with bowtie2 if needed
-    - Uses 03c_semibin.sh instead of standard binning scripts
-
-    Use --per-sample-cross-mapping with --comebin/--semibin and -a individual:
+    Use --per-sample-cross-mapping with -a individual:
     - Performs individual assembly per sample
     - Maps ALL samples in treatment to EACH sample's assembly
     - Creates bins using multi-sample coverage information
@@ -167,26 +152,16 @@ EXAMPLES:
     $0 --assembly-mode coassembly --treatment-level-binning \\
        -i /path/to/fastq -o /path/to/output
 
-    # Use COMEBin for binning instead of MetaWRAP
-    $0 --comebin -i /path/to/fastq -o /path/to/output
-
-    # Use SemiBin2 for binning instead of MetaWRAP
-    $0 --semibin -i /path/to/fastq -o /path/to/output
-
     # Per-sample assembly with cross-sample mapping (all samples map to each assembly)
-    $0 -a individual --comebin --per-sample-cross-mapping \\
+    $0 -a individual --per-sample-cross-mapping \\
        -i /path/to/fastq -o /path/to/output
 
-    # Per-sample assembly with cross-sample mapping using SemiBin2
-    $0 -a individual --semibin --per-sample-cross-mapping \\
-       -i /path/to/fastq -o /path/to/output
-
-    # Advanced binning with graph-aware refinement and consensus
-    $0 --semibin --binspreader --binette --gunc \\
+    # Advanced binning with graph-aware refinement
+    $0 --binspreader --binette --gunc \\
        -i /path/to/fastq -o /path/to/output
 
     # Nodule metagenomics: cross-sample mapping + full QC pipeline
-    $0 -a individual --semibin --per-sample-cross-mapping \\
+    $0 -a individual --per-sample-cross-mapping \\
        --binspreader --binette --gunc \\
        -i /path/to/fastq -o /path/to/output
 
