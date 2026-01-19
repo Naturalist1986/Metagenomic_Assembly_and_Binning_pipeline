@@ -59,50 +59,57 @@ OUTPUT_COLLECTION_DIR="${OUTPUT_DIR}/bin_collection/${TREATMENT}"
 mkdir -p "$OUTPUT_COLLECTION_DIR"
 
 # Function to collect selected bins from stage 7.5
+# Function to collect selected bins (Updated to handle Individual and Coassembly modes)
 collect_selected_bins() {
     local treatment="$1"
     local output_dir="$2"
 
     log "Collecting selected bins for treatment $treatment..."
 
-    # Source directory from stage 7.5 (bin selection)
-    local selected_bins_dir="${OUTPUT_DIR}/selected_bins/${treatment}"
-
-    if [ ! -d "$selected_bins_dir" ]; then
-        log "ERROR: Selected bins directory not found: $selected_bins_dir"
-        log "  Stage 7.5 (bin selection) must be run before bin collection"
-        return 1
-    fi
-
-    # Count available bins
-    local bin_count=$(ls -1 "$selected_bins_dir"/*.fa 2>/dev/null | wc -l)
-
-    if [ $bin_count -eq 0 ]; then
-        log "ERROR: No selected bins found in $selected_bins_dir"
-        return 1
-    fi
-
-    log "  Found $bin_count selected bins"
-
-    # Create output directory for collected bins
+    local selected_bins_base="${OUTPUT_DIR}/selected_bins/${treatment}"
     local collected_bins_dir="${output_dir}/selected_bins"
     mkdir -p "$collected_bins_dir"
 
-    # Copy selected bins to collection directory
-    log "  Copying selected bins to: $collected_bins_dir"
-    cp "$selected_bins_dir"/*.fa "$collected_bins_dir/" >/dev/null 2>&1
+    if [ ! -d "$selected_bins_base" ]; then
+        log "ERROR: Selected bins directory not found: $selected_bins_base"
+        return 1
+    fi
+
+    # Check if there are bins directly in the treatment folder (Coassembly Mode)
+    local direct_bins=( "$selected_bins_base"/*.fa )
+    
+    # Check if there are sample sub-directories (Individual Mode)
+    local sample_dirs=( "$selected_bins_base"/*/ )
+
+    if [ -f "${direct_bins[0]}" ]; then
+        log "  Detected coassembly structure. Copying bins..."
+        cp "$selected_bins_base"/*.fa "$collected_bins_dir/"
+    elif [ -d "${sample_dirs[0]}" ]; then
+        log "  Detected individual assembly structure. Searching sample sub-directories..."
+        # Iterate through each sample folder and copy bins
+        for s_dir in "${sample_dirs[@]}"; do
+            local s_name=$(basename "$s_dir")
+            local s_bins=( "$s_dir"/*.fa )
+            if [ -f "${s_bins[0]}" ]; then
+                log "    Copying bins from sample: $s_name"
+                # Optional: rename bins to include sample name to avoid collisions
+                for bin_file in "${s_bins[@]}"; do
+                    local b_name=$(basename "$bin_file")
+                    cp "$bin_file" "${collected_bins_dir}/${s_name}_${b_name}"
+                done
+            fi
+        done
+    else
+        log "ERROR: No .fa bins found in $selected_bins_base or its sub-directories"
+        return 1
+    fi
 
     local copied_count=$(ls -1 "$collected_bins_dir"/*.fa 2>/dev/null | wc -l)
-    log "  Successfully copied $copied_count bins"
-
-    if [ $copied_count -ne $bin_count ]; then
-        log "WARNING: Copied count ($copied_count) doesn't match expected ($bin_count)"
-    fi
+    log "  Successfully collected $copied_count total bins"
 
     echo "$collected_bins_dir|$copied_count"
     return 0
 }
-
 # Function to run CoverM for each sample
 # Function to run CoverM for each sample using existing BAM files
 run_coverm_for_samples() {
