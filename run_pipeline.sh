@@ -21,6 +21,7 @@ BINETTE_USE_REFINED=false  # Make Binette use BinSPreader-refined bins instead o
 USE_GUNC=false  # Run GUNC for chimerism detection after CheckM2
 SKIP_MERGE_LANES=true  # Skip lane merging by default (optional stage)
 SKIP_PLASMID_DETECTION=true  # Skip plasmid detection by default (optional stage)
+FORCE_RUN=false  # Force re-run stages even if checkpoints exist
 
 # Usage function
 usage() {
@@ -55,6 +56,7 @@ OPTIONS:
     --bin-reassembly-memory NUM   Memory in GB for bin reassembly [default: 32]
     -c, --create-template         Create sample sheet template and exit
     -d, --dry-run                 Show what would be run without executing
+    -f, --force                   Force re-run stages by deleting checkpoints (ignores completion status)
     -h, --help                    Show this help message
 
 SAMPLE SHEET FORMATS:
@@ -185,10 +187,14 @@ EXAMPLES:
     # Create sample sheet template
     $0 --create-template -i /path/to/fastq
 
+    # Force re-run stages 4-5 (ignoring checkpoints)
+    $0 -s 4 -e 5 --force -i /path/to/fastq -o /path/to/output
+
 NOTES:
     - Optional stages (lane merging, plasmid detection) are OFF by default
     - Use --merge-lanes if you have multiple lanes/runs per sample that need merging
     - Use --plasmid-detection to identify plasmid contigs and mobile elements
+    - Use --force to re-run stages even if they've already completed (deletes checkpoints)
     - File paths in sample sheets should be relative to INPUT_DIR
     - The pipeline auto-detects sample sheet format from column headers
     - Set INPUT_DIR and OUTPUT_DIR or they will be prompted
@@ -319,6 +325,10 @@ while [[ $# -gt 0 ]]; do
             DRY_RUN=true
             shift
             ;;
+        -f|--force)
+            FORCE_RUN=true
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -376,6 +386,7 @@ export USE_BINSPREADER
 export USE_BINETTE
 export BINETTE_USE_REFINED
 export USE_GUNC
+export FORCE_RUN
 export WORK_DIR="${OUTPUT_DIR}/processing_workdir"
 
 # Source configuration after setting environment variables
@@ -1258,6 +1269,48 @@ done
 # Submit main pipeline stages
 for stage in "${STAGES_TO_RUN[@]}"; do
     echo "📄 Processing stage $stage: ${STAGE_NAMES[$stage]}"
+
+    # Delete checkpoints if --force flag is used
+    if [ "$FORCE_RUN" = true ]; then
+        echo "  ⚠️  Force mode enabled: Deleting existing checkpoints for stage $stage"
+
+        # Determine if this stage runs at treatment-level or sample-level
+        if ( [ "$stage" = "2" ] && [ "$ASSEMBLY_MODE" = "coassembly" ] ) || \
+           ( [ "$stage" = "3" ] && [ "$TREATMENT_LEVEL_BINNING" = true ] ) || \
+           ( [ "$stage" = "4" ] && ( [ "$TREATMENT_LEVEL_BINNING" = true ] || [ "$ASSEMBLY_MODE" = "coassembly" ] ) ) || \
+           ( [ "$stage" = "5" ] && ( [ "$TREATMENT_LEVEL_BINNING" = true ] || [ "$ASSEMBLY_MODE" = "coassembly" ] ) ) || \
+           [ "$stage" = "6" ]; then
+            # Treatment-level: delete treatment checkpoints
+            local treatments_list=$(get_treatments)
+            for treatment in $treatments_list; do
+                local checkpoint_pattern="${OUTPUT_DIR}/checkpoints/${treatment}/"
+                local stage_name="${STAGE_SCRIPTS[$stage]%.sh}"
+                stage_name="${stage_name#??_}"  # Remove number prefix (e.g., "03_")
+
+                # Delete various checkpoint patterns for this stage
+                rm -f "${checkpoint_pattern}${stage_name}_complete" 2>/dev/null
+                rm -f "${checkpoint_pattern}${treatment}_${stage_name}_complete" 2>/dev/null
+
+                echo "    Deleted checkpoints: ${checkpoint_pattern}*${stage_name}*"
+            done
+        else
+            # Sample-level: delete sample checkpoints
+            for i in $(seq 0 $(($(get_total_samples) - 1))); do
+                local sample_info=$(get_sample_info_by_index $i 2>/dev/null)
+                if [ -n "$sample_info" ]; then
+                    IFS='|' read -r sample_name treatment _ _ <<< "$sample_info"
+                    local checkpoint_pattern="${OUTPUT_DIR}/checkpoints/${treatment}/"
+                    local stage_name="${STAGE_SCRIPTS[$stage]%.sh}"
+                    stage_name="${stage_name#??_}"  # Remove number prefix
+
+                    # Delete various checkpoint patterns for this sample
+                    rm -f "${checkpoint_pattern}${sample_name}_${stage_name}_complete" 2>/dev/null
+
+                    echo "    Deleted checkpoint: ${checkpoint_pattern}${sample_name}_${stage_name}_complete"
+                fi
+            done
+        fi
+    fi
 
     # Special handling for stage 3: Run unified binning workflow
     if [ "$stage" = "3" ]; then
