@@ -168,8 +168,13 @@ EOF
     local low_quality=0
 
     # Skip header line and process each bin
-    tail -n +2 "$binette_quality_report" | while IFS=$'\t' read -r name completeness contamination n50 size contigs; do
+    # Binette columns: name origin is_original original_name completeness contamination score checkm2_size N50 coding_density contig_count
+    tail -n +2 "$binette_quality_report" | while IFS=$'\t' read -r name origin is_original original_name completeness contamination score checkm2_size n50 coding_density contig_count; do
         ((total_bins++))
+
+        # Use checkm2_size as size for reporting
+        size="$checkm2_size"
+        contigs="$contig_count"
 
         log "Processing bin: $name (completeness=${completeness}%, contamination=${contamination}%)"
 
