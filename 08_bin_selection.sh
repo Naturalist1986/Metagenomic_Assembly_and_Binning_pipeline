@@ -157,7 +157,7 @@ Selection Criteria:
   Maximum Contamination: ${MAX_CONTAMINATION}%
 
 Bin Selection Results:
-Name\tCompleteness\tContamination\tN50\tSize\tStatus
+Name	Completeness	Contamination	N50	Size	Status
 EOF
 
     # Parse Binette quality report and select bins
@@ -167,12 +167,12 @@ EOF
     local medium_quality=0
     local low_quality=0
 
-    # Skip header line and process each bin
-    # Binette columns: name origin is_original original_name completeness contamination score checkm2_size N50 coding_density contig_count
-    tail -n +2 "$binette_quality_report" | while IFS=$'\t' read -r name origin is_original original_name completeness contamination score checkm2_size n50 coding_density contig_count; do
+    # Process bins using process substitution to preserve variable scope
+    # Binette columns: name origin is_original original_name completeness contamination score score_model checkm2_size N50 coding_density contig_count
+    while IFS=$'\t' read -r name origin is_original original_name completeness contamination score score_model checkm2_size n50 coding_density contig_count; do
         ((total_bins++))
 
-        # Use checkm2_size as size for reporting
+        # Use checkm2_size as size and n50 for reporting
         size="$checkm2_size"
         contigs="$contig_count"
 
@@ -215,7 +215,7 @@ EOF
                 log "  WARNING: Bin file not found: $source_bin"
             fi
         fi
-    done
+    done < <(tail -n +2 "$binette_quality_report")
 
     # Count actual bins copied
     local bins_copied=$(find "$output_dir" -name "*.fa" 2>/dev/null | wc -l)
