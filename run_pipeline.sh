@@ -749,8 +749,8 @@ calculate_array_size() {
         return
     fi
     
-    # Special handling for stage 4 in treatment-level binning mode
-    if [ "$stage" = "4" ] && [ "$TREATMENT_LEVEL_BINNING" = true ]; then
+    # Special handling for stage 4 in coassembly or treatment-level binning mode
+    if [ "$stage" = "4" ] && ( [ "$TREATMENT_LEVEL_BINNING" = true ] || [ "$ASSEMBLY_MODE" = "coassembly" ] ); then
         # Treatment-level bin refinement follows treatment-level binning
         local treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -772,8 +772,8 @@ calculate_array_size() {
         return
     fi
 
-    # Special handling for stage 5 (bin selection) in treatment-level binning mode
-    if [ "$TREATMENT_LEVEL_BINNING" = true ] && [ "$stage" = "5" ]; then
+    # Special handling for stage 5 (bin selection) in coassembly or treatment-level binning mode
+    if ( [ "$TREATMENT_LEVEL_BINNING" = true ] || [ "$ASSEMBLY_MODE" = "coassembly" ] ) && [ "$stage" = "5" ]; then
         # Treatment-level: run once per treatment
         local treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -886,8 +886,8 @@ get_filtered_indices() {
         return
     fi
     
-    # Special handling for stage 4 in treatment-level binning mode
-    if [ "$stage" = "4" ] && [ "$TREATMENT_LEVEL_BINNING" = true ]; then
+    # Special handling for stage 4 in coassembly or treatment-level binning mode
+    if [ "$stage" = "4" ] && ( [ "$TREATMENT_LEVEL_BINNING" = true ] || [ "$ASSEMBLY_MODE" = "coassembly" ] ); then
         # Treatment-level bin refinement: return treatment indices
         treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -903,8 +903,8 @@ get_filtered_indices() {
         return
     fi
 
-    # Special handling for stage 5 (bin selection) in treatment-level binning mode
-    if [ "$TREATMENT_LEVEL_BINNING" = true ] && [ "$stage" = "5" ]; then
+    # Special handling for stage 5 (bin selection) in coassembly or treatment-level binning mode
+    if ( [ "$TREATMENT_LEVEL_BINNING" = true ] || [ "$ASSEMBLY_MODE" = "coassembly" ] ) && [ "$stage" = "5" ]; then
         # Treatment-level: return treatment indices
         treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then

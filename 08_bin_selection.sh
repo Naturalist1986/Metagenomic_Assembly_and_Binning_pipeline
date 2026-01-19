@@ -19,7 +19,8 @@ else
 fi
 
 # Determine processing mode: treatment-level or sample-level
-if [ "${TREATMENT_LEVEL_BINNING:-false}" = "true" ]; then
+# Treatment-level if TREATMENT_LEVEL_BINNING=true OR ASSEMBLY_MODE=coassembly
+if [ "${TREATMENT_LEVEL_BINNING:-false}" = "true" ] || [ "${ASSEMBLY_MODE:-individual}" = "coassembly" ]; then
     # Treatment-level mode: array index maps to treatment
     ARRAY_INDEX=${SLURM_ARRAY_TASK_ID:-0}
 
