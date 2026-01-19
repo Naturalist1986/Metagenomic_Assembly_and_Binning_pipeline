@@ -5,7 +5,7 @@
 
 # Default values
 START_STAGE=0  # Start from quality filtering by default (skip optional merge/plasmid stages)
-END_STAGE=9    # Updated: removed stage 8 (metawrap quant)
+END_STAGE=6    # Updated: removed reassembly, magpurify, and checkm2 stages (Binette runs checkm2)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PIPELINE_SCRIPT_DIR="$SCRIPT_DIR"  # Export for SLURM jobs
 
@@ -31,8 +31,8 @@ Master script to run the complete metagenomic pipeline.
 Supports multiple sample sheet formats including multi-run datasets.
 
 OPTIONS:
-    -s, --start-stage NUM         Start from stage NUM (0 to 9) [default: 0]
-    -e, --end-stage NUM           End at stage NUM (0 to 9) [default: 9]
+    -s, --start-stage NUM         Start from stage NUM (0 to 6) [default: 0]
+    -e, --end-stage NUM           End at stage NUM (0 to 6) [default: 6]
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
     --per-sample-cross-mapping    Map all treatment samples to each sample's assembly (individual mode only)
@@ -85,12 +85,9 @@ STAGES:
     1  - Validation & Repair (validates paired-end sync, repairs if needed)
     2  - Assembly (MetaSPAdes - individual or co-assembly)
     3  - Unified Binning (ALL 5 binners: MetaBAT2, MaxBin2, CONCOCT, COMEBin, SemiBin)
-    4  - Consensus Binning (Binette - combines all 5 bin sets for high-quality MAGs)
-    5  - Bin Reassembly (MetaWRAP - refines bins through reassembly)
-    6  - MAGpurify (contamination removal)
-    7  - CheckM2 (quality assessment)
-    8  - Bin Selection (selects best reassembly version: orig/strict/permissive)
-    9  - Bin Collection (per treatment: collects selected bins, runs CoverM & GTDB-Tk)
+    4  - Consensus Binning (Binette - combines all 5 bin sets, runs CheckM2)
+    5  - Bin Selection (selects high-quality bins based on Binette's CheckM2 results)
+    6  - Bin Collection (per treatment: collects selected bins, runs CoverM & GTDB-Tk)
 
 OPTIONAL STAGES (use flags to enable):
     --merge-lanes        Lane/Run Detection & Merge (auto-detects and merges multiple lanes/runs)
@@ -98,7 +95,7 @@ OPTIONAL STAGES (use flags to enable):
 
 ADDITIONAL TOOLS (run separately after pipeline completes):
     final_report.sh      Generate cross-treatment comparison plots with taxonomy labels
-                         (Requires all treatments to complete stage 9 first)
+                         (Requires all treatments to complete stage 6 first)
 
 BINNING MODES:
     By default, binning is performed at the sample level using MetaWRAP (MetaBat2, MaxBin2, Concoct).
@@ -133,7 +130,7 @@ BINNING MODES:
     - Essential QC for closely related community members
 
 EXAMPLES:
-    # Run complete pipeline (default: stages 0-9, no lane merge or plasmid detection)
+    # Run complete pipeline (default: stages 0-6, no lane merge or plasmid detection)
     $0 -i /path/to/fastq -o /path/to/output
 
     # Run with lane merging for multi-run samples
@@ -405,14 +402,14 @@ is_in_array() {
     return 1
 }
 
-# Function to validate stage numbers (0-9)
+# Function to validate stage numbers (0-6)
 validate_stage() {
     local stage="$1"
     local stage_name="$2"
 
-    # Check if it's a valid stage number (0-9 only)
-    if ! [[ "$stage" =~ ^[0-9]$ ]]; then
-        echo "Error: $stage_name must be 0-9"
+    # Check if it's a valid stage number (0-6 only)
+    if ! [[ "$stage" =~ ^[0-6]$ ]]; then
+        echo "Error: $stage_name must be 0-6"
         return 1
     fi
     return 0
@@ -501,18 +498,15 @@ fi
 export TREATMENTS_FILE="${WORK_DIR}/treatments.txt"
 export SAMPLE_INFO_FILE="${WORK_DIR}/sample_info.txt"
 
-# Define stage names and scripts (renumbered, removed stage 8 metawrap quant)
+# Define stage names and scripts (streamlined: removed reassembly, magpurify, checkm2)
 declare -A STAGE_NAMES=(
     [0]="Quality Filtering"
     [1]="Validation & Repair"
     [2]="Assembly"
     [3]="Binning"
     [4]="Bin Refinement"
-    [5]="Bin Reassembly"
-    [6]="MAGpurify"
-    [7]="CheckM2"
-    [8]="Bin Selection"
-    [9]="Bin Collection (per treatment: collect bins, CoverM abundance, GTDB-Tk)"
+    [5]="Bin Selection"
+    [6]="Bin Collection (per treatment: collect bins, CoverM abundance, GTDB-Tk)"
 )
 
 declare -A STAGE_SCRIPTS=(
@@ -521,11 +515,8 @@ declare -A STAGE_SCRIPTS=(
     [2]="02_assembly.sh"  # Will be updated based on assembly mode
     [3]="03_binning.sh"  # Will be updated based on binning mode
     [4]="04_bin_refinement.sh"
-    [5]="05_bin_reassembly.sh"
-    [6]="06_magpurify.sh"
-    [7]="07_checkm2.sh"
-    [8]="08_bin_selection.sh"
-    [9]="09_bin_collection.sh"
+    [5]="08_bin_selection.sh"
+    [6]="09_bin_collection.sh"
 )
 
 # Optional stage scripts (only run if flags are set)
@@ -781,9 +772,8 @@ calculate_array_size() {
         return
     fi
 
-    # Special handling for stages 5, 6, 7, 8 in treatment-level binning mode
-    if [ "$TREATMENT_LEVEL_BINNING" = true ] && \
-       ( [ "$stage" = "5" ] || [ "$stage" = "6" ] || [ "$stage" = "7" ] || [ "$stage" = "8" ] ); then
+    # Special handling for stage 5 (bin selection) in treatment-level binning mode
+    if [ "$TREATMENT_LEVEL_BINNING" = true ] && [ "$stage" = "5" ]; then
         # Treatment-level: run once per treatment
         local treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -805,8 +795,8 @@ calculate_array_size() {
         return
     fi
 
-    # Sample-level stages (0-8 in individual mode)
-    if compare_stages "$stage" "8" "le"; then
+    # Sample-level stages (0-5 in individual mode)
+    if compare_stages "$stage" "5" "le"; then
         # Filter samples if specific treatment or sample requested
         if [ ${#SPECIFIC_TREATMENTS[@]} -gt 0 ] || [ ${#SPECIFIC_SAMPLES[@]} -gt 0 ]; then
             local count=0
@@ -830,8 +820,8 @@ calculate_array_size() {
         else
             echo "$total_samples"
         fi
-    elif [ "$stage" = "9" ]; then
-        # Stage 9: Final Report - treatment-level (one job per treatment)
+    elif [ "$stage" = "6" ]; then
+        # Stage 6: Bin Collection - treatment-level (one job per treatment)
         # This includes bin collection, CoverM abundance, GTDB-Tk, and taxonomy plots
         local treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -913,9 +903,8 @@ get_filtered_indices() {
         return
     fi
 
-    # Special handling for stages 5, 6, 7, 8 in treatment-level binning mode
-    if [ "$TREATMENT_LEVEL_BINNING" = true ] && \
-       ( [ "$stage" = "5" ] || [ "$stage" = "6" ] || [ "$stage" = "7" ] || [ "$stage" = "8" ] ); then
+    # Special handling for stage 5 (bin selection) in treatment-level binning mode
+    if [ "$TREATMENT_LEVEL_BINNING" = true ] && [ "$stage" = "5" ]; then
         # Treatment-level: return treatment indices
         treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
@@ -931,8 +920,8 @@ get_filtered_indices() {
         return
     fi
 
-    # Sample-level stages (0-8)
-    if compare_stages "$stage" "8" "le"; then
+    # Sample-level stages (0-5)
+    if compare_stages "$stage" "5" "le"; then
         for i in $(seq 0 $((total_samples - 1))); do
             sample_info=$(get_sample_info_by_index $i 2>/dev/null)
             if [ -n "$sample_info" ]; then
@@ -949,8 +938,8 @@ get_filtered_indices() {
                 indices+=($i)
             fi
         done
-    elif [ "$stage" = "9" ]; then
-        # Stage 9: Final Report - treatment-level (includes bin collection, abundance, GTDB-Tk, plots)
+    elif [ "$stage" = "6" ]; then
+        # Stage 6: Bin Collection - treatment-level (includes bin collection, abundance, GTDB-Tk)
         treatments_list=$(get_treatments)
         if [ -n "$treatments_list" ]; then
             local treatments=($treatments_list)
@@ -1258,7 +1247,7 @@ for opt_stage in "${OPTIONAL_STAGES_TO_RUN[@]}"; do
     echo
 done
 
-# Now handle main pipeline stages (0-9)
+# Now handle main pipeline stages (0-6)
 STAGES_TO_RUN=()
 for stage in $(seq $START_STAGE $END_STAGE); do
     # Skip plasmid detection stage if it's between other stages

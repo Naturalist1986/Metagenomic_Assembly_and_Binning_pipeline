@@ -7,7 +7,8 @@
 #SBATCH --mem=16G
 #SBATCH --time=2:00:00
 
-# 07b_bin_selection.sh - Select best bin version based on CheckM2 quality
+# 08_bin_selection.sh - Select high-quality bins from Binette consensus binning
+# Note: Binette already runs CheckM2, so we just read its quality reports
 
 # Source configuration and utilities
 if [ -n "$PIPELINE_SCRIPT_DIR" ]; then
@@ -81,68 +82,9 @@ else
     fi
 fi
 
-# Function to extract quality metrics for a bin from CheckM2 report
-get_bin_quality() {
-    local checkm2_report="$1"
-    local bin_name="$2"
-
-    # Use awk to find exact match in first column and extract completeness/contamination
-    # This handles both tab and space delimited files robustly
-    local quality_data=$(awk -v bin="$bin_name" '$1 == bin {print $2 "|" $3; exit}' "$checkm2_report")
-
-    if [ -z "$quality_data" ]; then
-        echo ""
-        return 1
-    fi
-
-    # Parse completeness and contamination
-    IFS='|' read -r completeness contamination <<< "$quality_data"
-
-    # Validate that values are numeric and not empty/N/A
-    if [ -z "$completeness" ] || [ -z "$contamination" ] || \
-       [[ "$completeness" =~ [^0-9.] ]] || [[ "$contamination" =~ [^0-9.] ]]; then
-        # Invalid or missing values
-        echo ""
-        return 1
-    fi
-
-    echo "${completeness}|${contamination}"
-    return 0
-}
-
-# Function to compare two bin versions and select the better one
-# Returns: 0 if first is better, 1 if second is better
-compare_bin_quality() {
-    local comp1="$1"
-    local cont1="$2"
-    local comp2="$3"
-    local cont2="$4"
-
-    # Validate all inputs are numeric
-    if ! [[ "$comp1" =~ ^[0-9]+\.?[0-9]*$ ]] || ! [[ "$cont1" =~ ^[0-9]+\.?[0-9]*$ ]] || \
-       ! [[ "$comp2" =~ ^[0-9]+\.?[0-9]*$ ]] || ! [[ "$cont2" =~ ^[0-9]+\.?[0-9]*$ ]]; then
-        # If any value is invalid, can't compare
-        return 1
-    fi
-
-    # Calculate quality score: completeness - 5*contamination (MIMAG standard)
-    local score1=$(echo "scale=2; $comp1 - (5 * $cont1)" | bc -l 2>/dev/null)
-    local score2=$(echo "scale=2; $comp2 - (5 * $cont2)" | bc -l 2>/dev/null)
-
-    # Check if bc succeeded
-    if [ -z "$score1" ] || [ -z "$score2" ]; then
-        return 1
-    fi
-
-    # Compare scores
-    local comparison=$(echo "$score1 > $score2" | bc -l 2>/dev/null)
-
-    if [ "$comparison" -eq 1 ]; then
-        return 0  # First is better
-    else
-        return 1  # Second is better
-    fi
-}
+# Quality thresholds for bin selection
+MIN_COMPLETENESS=50
+MAX_CONTAMINATION=10
 
 # Main processing function
 stage_bin_selection() {
@@ -151,14 +93,14 @@ stage_bin_selection() {
 
     if [ -n "$sample_name" ]; then
         # Sample-level mode
-        log "Selecting best bin versions for $sample_name ($treatment)"
-        local checkm2_dir="${OUTPUT_DIR}/checkm2/${treatment}/${sample_name}"
+        log "Selecting high-quality bins for $sample_name ($treatment)"
+        local binette_dir="${OUTPUT_DIR}/bin_refinement/${treatment}/${sample_name}/binette"
         local output_dir="${OUTPUT_DIR}/selected_bins/${treatment}/${sample_name}"
         local entity_desc="sample $sample_name"
     else
         # Treatment-level mode
-        log "Selecting best bin versions for treatment $treatment"
-        local checkm2_dir="${OUTPUT_DIR}/checkm2/${treatment}"
+        log "Selecting high-quality bins for treatment $treatment"
+        local binette_dir="${OUTPUT_DIR}/bin_refinement/${treatment}/binette"
         local output_dir="${OUTPUT_DIR}/selected_bins/${treatment}"
         local entity_desc="treatment $treatment"
     fi
@@ -171,42 +113,23 @@ stage_bin_selection() {
         return 0
     fi
 
-    # Check for CheckM2 quality report
-    local checkm2_report="${checkm2_dir}/quality_report.tsv"
-    if [ ! -f "$checkm2_report" ]; then
-        log "ERROR: CheckM2 quality report not found: $checkm2_report"
+    # Check for Binette quality report
+    local binette_quality_report="${binette_dir}/final_bins_quality_reports.tsv"
+    if [ ! -f "$binette_quality_report" ]; then
+        log "ERROR: Binette quality report not found: $binette_quality_report"
+        log "Binette must complete successfully before bin selection"
         return 1
     fi
 
-    # Get list of unique base bin names (without .orig/.strict/.permissive suffixes)
-    log "Analyzing CheckM2 results to identify bin versions..."
-
-    local base_bins=()
-    while IFS=$'\t' read -r name rest; do
-        # Skip header
-        if [ "$name" = "Name" ]; then
-            continue
-        fi
-
-        # Extract base name by removing version suffixes
-        local base_name="$name"
-        base_name="${base_name%.orig}"
-        base_name="${base_name%.strict}"
-        base_name="${base_name%.permissive}"
-
-        # Add to array if not already present
-        if [[ ! " ${base_bins[@]} " =~ " ${base_name} " ]]; then
-            base_bins+=("$base_name")
-        fi
-    done < "$checkm2_report"
-
-    local total_bins=${#base_bins[@]}
-    log "Found $total_bins unique bins with reassembly versions"
-
-    if [ $total_bins -eq 0 ]; then
-        log "ERROR: No bins found in CheckM2 report"
+    # Check for Binette final bins directory
+    local binette_bins_dir="${binette_dir}/final_bins"
+    if [ ! -d "$binette_bins_dir" ]; then
+        log "ERROR: Binette bins directory not found: $binette_bins_dir"
         return 1
     fi
+
+    log "Reading Binette quality report: $binette_quality_report"
+    log "Source bins directory: $binette_bins_dir"
 
     # Create selection report
     local selection_report="${output_dir}/bin_selection_report.txt"
@@ -218,288 +141,120 @@ Date: $(date)
 Treatment: $treatment
 $([ -n "$sample_name" ] && echo "Sample: $sample_name")
 
+Source: Binette consensus binning with CheckM2 quality assessment
+
 Selection Criteria:
-  Quality Score = Completeness - (5 × Contamination)
-  Higher score indicates better quality
+  Minimum Completeness: ${MIN_COMPLETENESS}%
+  Maximum Contamination: ${MAX_CONTAMINATION}%
 
 Bin Selection Results:
-Base_Bin\tSelected_Version\tCompleteness\tContamination\tQuality_Score\tReason
+Name\tCompleteness\tContamination\tN50\tSize\tStatus
 EOF
 
-    # Process each base bin
-    local selected_count=0
-    local orig_selected=0
-    local strict_selected=0
-    local permissive_selected=0
+    # Parse Binette quality report and select bins
+    local total_bins=0
+    local selected_bins=0
+    local high_quality=0
+    local medium_quality=0
+    local low_quality=0
 
-    for base_bin in "${base_bins[@]}"; do
-        log "Processing bin: $base_bin"
+    # Skip header line and process each bin
+    tail -n +2 "$binette_quality_report" | while IFS=$'\t' read -r name completeness contamination n50 size contigs; do
+        ((total_bins++))
 
-        # Check all possible versions and get their quality metrics
-        # Note: base name (no suffix) and .orig are DIFFERENT versions with potentially different stats
+        log "Processing bin: $name (completeness=${completeness}%, contamination=${contamination}%)"
 
-        # Version 1: Base name (no suffix)
-        local base_quality=$(get_bin_quality "$checkm2_report" "${base_bin}")
-        local base_exists=$?
+        # Determine quality tier
+        local quality_tier=""
+        local status=""
 
-        # Version 2: .orig suffix
-        local orig_quality=$(get_bin_quality "$checkm2_report" "${base_bin}.orig")
-        local orig_exists=$?
-
-        # Version 3: .strict suffix
-        local strict_quality=$(get_bin_quality "$checkm2_report" "${base_bin}.strict")
-        local strict_exists=$?
-
-        # Version 4: .permissive suffix
-        local permissive_quality=$(get_bin_quality "$checkm2_report" "${base_bin}.permissive")
-        local permissive_exists=$?
-
-        # Ensure at least one version exists
-        if [ $base_exists -ne 0 ] && [ $orig_exists -ne 0 ] && [ $strict_exists -ne 0 ] && [ $permissive_exists -ne 0 ]; then
-            log "  WARNING: No versions found for $base_bin, skipping..."
-            continue
-        fi
-
-        # Parse quality metrics
-        local best_version=""
-        local best_comp=0
-        local best_cont=100
-        local best_score=-500
-        local reason=""
-
-        # Evaluate base version (no suffix)
-        if [ $base_exists -eq 0 ] && [ -n "$base_quality" ]; then
-            IFS='|' read -r comp cont <<< "$base_quality"
-            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l 2>/dev/null)
-            if [ -n "$score" ]; then
-                log "  base (no suffix): completeness=$comp%, contamination=$cont%, score=$score"
-                best_version="base"
-                best_comp="$comp"
-                best_cont="$cont"
-                best_score="$score"
-                reason="Best quality score among available versions"
-            else
-                log "  base (no suffix): FAILED to calculate quality score"
-            fi
+        if (( $(echo "$completeness >= 90" | bc -l) )) && (( $(echo "$contamination < 5" | bc -l) )); then
+            quality_tier="high"
+            status="SELECTED (High Quality)"
+            ((high_quality++))
+            ((selected_bins++))
+        elif (( $(echo "$completeness >= ${MIN_COMPLETENESS}" | bc -l) )) && (( $(echo "$contamination <= ${MAX_CONTAMINATION}" | bc -l) )); then
+            quality_tier="medium"
+            status="SELECTED (Medium Quality)"
+            ((medium_quality++))
+            ((selected_bins++))
         else
-            log "  base (no suffix): NOT FOUND in CheckM2 report"
+            quality_tier="low"
+            status="REJECTED (Below Quality Threshold)"
+            ((low_quality++))
         fi
 
-        # Evaluate orig version
-        if [ $orig_exists -eq 0 ] && [ -n "$orig_quality" ]; then
-            IFS='|' read -r comp cont <<< "$orig_quality"
-            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l 2>/dev/null)
-            if [ -n "$score" ]; then
-                log "  orig: completeness=$comp%, contamination=$cont%, score=$score"
-                if [ -z "$best_version" ] || compare_bin_quality "$comp" "$cont" "$best_comp" "$best_cont"; then
-                    best_version="orig"
-                    best_comp="$comp"
-                    best_cont="$cont"
-                    best_score="$score"
-                    reason="Best quality score among available versions"
-                fi
-            else
-                log "  orig: FAILED to calculate quality score"
-            fi
-        else
-            log "  orig: NOT FOUND in CheckM2 report"
-        fi
+        log "  $status"
 
-        # Evaluate strict version
-        if [ $strict_exists -eq 0 ] && [ -n "$strict_quality" ]; then
-            IFS='|' read -r comp cont <<< "$strict_quality"
-            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l 2>/dev/null)
-            if [ -n "$score" ]; then
-                log "  strict: completeness=$comp%, contamination=$cont%, score=$score"
-                if [ -z "$best_version" ] || compare_bin_quality "$comp" "$cont" "$best_comp" "$best_cont"; then
-                    best_version="strict"
-                    best_comp="$comp"
-                    best_cont="$cont"
-                    best_score="$score"
-                    reason="Best quality score among available versions"
-                fi
-            else
-                log "  strict: FAILED to calculate quality score"
-            fi
-        else
-            log "  strict: NOT FOUND in CheckM2 report"
-        fi
-
-        # Evaluate permissive version
-        if [ $permissive_exists -eq 0 ] && [ -n "$permissive_quality" ]; then
-            IFS='|' read -r comp cont <<< "$permissive_quality"
-            local score=$(echo "scale=2; $comp - (5 * $cont)" | bc -l 2>/dev/null)
-            if [ -n "$score" ]; then
-                log "  permissive: completeness=$comp%, contamination=$cont%, score=$score"
-                if [ -z "$best_version" ] || compare_bin_quality "$comp" "$cont" "$best_comp" "$best_cont"; then
-                    best_version="permissive"
-                    best_comp="$comp"
-                    best_cont="$cont"
-                    best_score="$score"
-                    reason="Best quality score among available versions"
-                fi
-            else
-                log "  permissive: FAILED to calculate quality score"
-            fi
-        else
-            log "  permissive: NOT FOUND in CheckM2 report"
-        fi
-
-        # Check if we found any valid version
-        if [ -z "$best_version" ]; then
-            log "  ERROR: No valid versions found for $base_bin (all versions missing or invalid)"
-            continue
-        fi
-
-        log "  SELECTED: $best_version (score=$best_score)"
-
-        # Record selection
-        echo -e "${base_bin}\t${best_version}\t${best_comp}\t${best_cont}\t${best_score}\t${reason}" >> "$selection_report"
+        # Record in report
+        echo -e "${name}\t${completeness}\t${contamination}\t${n50}\t${size}\t${status}" >> "$selection_report"
 
         # Copy selected bin to output directory
-        local source_bin=""
-        if [ "$best_version" = "base" ]; then
-            # Base version: bin without any suffix
-            if [ -n "$sample_name" ]; then
-                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/${base_bin}.fa"
-            else
-                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/purified_bins/${base_bin}.fa"
-            fi
-            # Count as orig for summary (it's the non-reassembled version)
-            ((orig_selected++))
-        elif [ "$best_version" = "orig" ]; then
-            # Orig version: bin with .orig suffix
-            if [ -n "$sample_name" ]; then
-                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/${base_bin}.orig.fa"
-            else
-                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/purified_bins/${base_bin}.orig.fa"
-            fi
-            ((orig_selected++))
-        elif [ "$best_version" = "strict" ]; then
-            # Strict version: bin with .strict suffix
-            if [ -n "$sample_name" ]; then
-                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/${base_bin}.strict.fa"
-            else
-                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/purified_bins/${base_bin}.strict.fa"
-            fi
-            ((strict_selected++))
-        else
-            # Permissive version: bin with .permissive suffix
-            if [ -n "$sample_name" ]; then
-                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/${sample_name}/purified_bins/${base_bin}.permissive.fa"
-            else
-                source_bin="${OUTPUT_DIR}/magpurify/${treatment}/purified_bins/${base_bin}.permissive.fa"
-            fi
-            ((permissive_selected++))
-        fi
+        if [ "$quality_tier" != "low" ]; then
+            local source_bin="${binette_bins_dir}/${name}.fa"
+            local dest_bin="${output_dir}/${name}.fa"
 
-        if [ -f "$source_bin" ]; then
-            cp "$source_bin" "${output_dir}/${base_bin}.fa"
-            ((selected_count++))
-            log "  Copied to: ${output_dir}/${base_bin}.fa"
-        else
-            log "  ERROR: Source bin not found: $source_bin"
+            if [ -f "$source_bin" ]; then
+                cp "$source_bin" "$dest_bin"
+                log "  Copied: $source_bin -> $dest_bin"
+            else
+                log "  WARNING: Bin file not found: $source_bin"
+            fi
         fi
     done
+
+    # Count actual bins copied
+    local bins_copied=$(find "$output_dir" -name "*.fa" 2>/dev/null | wc -l)
 
     # Add summary to report
     cat >> "$selection_report" << EOF
 
-Selection Summary:
-  Total bins processed: $total_bins
-  Bins successfully selected: $selected_count
-
-Version Distribution:
-  Original versions selected: $orig_selected
-  Strict versions selected: $strict_selected
-  Permissive versions selected: $permissive_selected
-
-Output Directory: $output_dir
+=====================================
+Summary:
+  Total bins from Binette: $total_bins
+  High Quality (>=90% comp, <5% cont): $high_quality
+  Medium Quality (>=${MIN_COMPLETENESS}% comp, <=${MAX_CONTAMINATION}% cont): $medium_quality
+  Low Quality (rejected): $low_quality
+  Total selected: $selected_bins
+  Bins copied: $bins_copied
+=====================================
 EOF
 
-    log "Bin selection completed for $entity_desc:"
-    log "  Total processed: $total_bins bins"
-    log "  Successfully selected: $selected_count bins"
-    log "  Version distribution: orig=$orig_selected, strict=$strict_selected, permissive=$permissive_selected"
+    log "====== Bin Selection Summary ======"
+    log "Total bins from Binette: $total_bins"
+    log "High Quality: $high_quality"
+    log "Medium Quality: $medium_quality"
+    log "Low Quality (rejected): $low_quality"
+    log "Total selected: $selected_bins"
+    log "Bins copied: $bins_copied"
+    log "Selection report: $selection_report"
 
     # Create completion flag
     touch "${output_dir}/bin_selection_complete.flag"
 
-    if [ $selected_count -gt 0 ]; then
-        return 0
-    else
-        return 1
-    fi
-}
-
-# Validation function
-validate_bin_selection() {
-    local treatment="$1"
-    local sample_name="${2:-}"
-
-    if [ -n "$sample_name" ]; then
-        local output_dir="${OUTPUT_DIR}/selected_bins/${treatment}/${sample_name}"
-    else
-        local output_dir="${OUTPUT_DIR}/selected_bins/${treatment}"
-    fi
-
-    # Check completion flag
-    if [ ! -f "${output_dir}/bin_selection_complete.flag" ]; then
-        return 1
-    fi
-
-    # Check that we have selected bins
-    local selected_count=$(ls -1 "${output_dir}"/*.fa 2>/dev/null | wc -l)
-    if [ $selected_count -eq 0 ]; then
-        return 1
-    fi
-
-    # Check that selection report exists
-    if [ ! -f "${output_dir}/bin_selection_report.txt" ]; then
-        return 1
-    fi
-
-    log "Validation successful: Selected $selected_count bins"
+    log "✓ Bin selection completed successfully for $entity_desc"
     return 0
 }
 
-# Run the bin selection stage based on processing mode
+# Execute main function
 if [ "$PROCESSING_MODE" = "treatment-level" ]; then
-    # Treatment-level mode: run once for all bins in treatment
-    if stage_bin_selection "$TREATMENT"; then
-        # Validate results
-        if validate_bin_selection "$TREATMENT"; then
-            create_treatment_checkpoint "$TREATMENT" "bin_selection"
-            log "====== Bin selection completed successfully for treatment $TREATMENT ======"
-        else
-            log "ERROR: Bin selection validation failed for treatment $TREATMENT"
-            cleanup_temp_dir "$TEMP_DIR"
-            exit 1
-        fi
-    else
-        log "ERROR: Bin selection stage failed for treatment $TREATMENT"
-        cleanup_temp_dir "$TEMP_DIR"
-        exit 1
+    stage_bin_selection "$TREATMENT"
+    status=$?
+
+    if [ $status -eq 0 ]; then
+        create_treatment_checkpoint "$TREATMENT" "bin_selection"
     fi
 
+    cleanup_temp_dir "$TEMP_DIR"
+    exit $status
 else
-    # Sample-level mode: run for individual sample
-    if stage_bin_selection "$TREATMENT" "$SAMPLE_NAME"; then
-        # Validate results
-        if validate_bin_selection "$TREATMENT" "$SAMPLE_NAME"; then
-            create_sample_checkpoint "$SAMPLE_NAME" "bin_selection"
-            log "====== Bin selection completed successfully for $SAMPLE_NAME ======"
-        else
-            log "ERROR: Bin selection validation failed for $SAMPLE_NAME"
-            cleanup_temp_dir "$TEMP_DIR"
-            exit 1
-        fi
-    else
-        log "ERROR: Bin selection stage failed for $SAMPLE_NAME"
-        cleanup_temp_dir "$TEMP_DIR"
-        exit 1
-    fi
-fi
+    stage_bin_selection "$TREATMENT" "$SAMPLE_NAME"
+    status=$?
 
-# Cleanup
-cleanup_temp_dir "$TEMP_DIR"
+    if [ $status -eq 0 ]; then
+        create_sample_checkpoint "$SAMPLE_NAME" "bin_selection"
+    fi
+
+    cleanup_temp_dir "$TEMP_DIR"
+    exit $status
+fi

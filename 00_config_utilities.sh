@@ -762,8 +762,9 @@ init_sample_info() {
     # Create essential directories first
     mkdir -p "${WORK_DIR}"
     mkdir -p "${LOG_DIR}"
+    mkdir -p "${LOG_DIR}/slurm"  # Create slurm logs subdirectory
     mkdir -p "${OUTPUT_DIR}/checkpoints"
-    
+
     if [ -f "$SAMPLE_SHEET" ]; then
         log "Using sample sheet: $SAMPLE_SHEET"
         parse_sample_sheet "$SAMPLE_SHEET"
