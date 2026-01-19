@@ -172,6 +172,7 @@ run_coverm_for_samples() {
             --output-format dense \
             --min-read-aligned-percent 0.75 \
             --min-read-percent-identity 0.95 \
+            --min-covered-fraction 0 \
             --methods relative_abundance mean trimmed_mean covered_fraction reads_per_base rpkm tpm \
             --threads $SLURM_CPUS_PER_TASK \
             2>&1 | tee "${LOG_DIR}/${treatment}/${sample}_coverm.log"
