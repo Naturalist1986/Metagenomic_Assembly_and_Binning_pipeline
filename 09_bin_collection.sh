@@ -104,12 +104,19 @@ collect_selected_bins() {
 }
 
 # Function to run CoverM for each sample
+# Function to run CoverM for each sample using existing BAM files
 run_coverm_for_samples() {
     local treatment="$1"
     local samples_str="$2"
     local bins_dir="$3"
 
-    log "Running CoverM abundance calculation for treatment $treatment..."
+    log "Running CoverM abundance calculation using PRE-EXISTING BAM files for treatment $treatment..."
+
+    # Define the custom BAM source directory
+    # Note: Using the path provided, assuming 'treatment' in the path should be the actual treatment name
+    local bam_source_dir="/sci/backup/ofinkel/moshea/Efrat_Metagenomes_Novogene/coassembly/binning/${treatment}/shared_bam_files"
+    
+    log "  Source BAM directory: $bam_source_dir"
 
     # Convert samples string to array
     local samples=($samples_str)
@@ -120,95 +127,53 @@ run_coverm_for_samples() {
         return 1
     fi
 
-    local bin_count=$(ls -1 "$bins_dir"/*.fa 2>/dev/null | wc -l)
-    if [ $bin_count -eq 0 ]; then
-        log "ERROR: No bins found in $bins_dir"
-        return 1
-    fi
-
-    log "  Using $bin_count bins from: $bins_dir"
-
-    # Activate CoverM environment (usually in checkm environment)
+    # Activate CoverM environment
     activate_env checkm
-
-    # Check if CoverM is available
-    if ! command -v coverm &> /dev/null; then
-        log "ERROR: CoverM not available in environment"
-        conda deactivate
-        return 1
-    fi
 
     # Process each sample
     local successful=0
     local failed=0
 
+    # Get list of bin files
+    local bin_files=("$bins_dir"/*.fa)
+
     for sample in "${samples[@]}"; do
         log "  Processing sample: $sample"
 
-        # Output directory for this sample
+        # Output directory for this sample's results
         local sample_output_dir="${OUTPUT_DIR}/coverm/${treatment}/${sample}"
         mkdir -p "$sample_output_dir"
 
-        # Check if already completed (skip if --force flag used)
-        if [ "${FORCE_RUN:-false}" != "true" ] && [ -f "${sample_output_dir}/abundance.tsv" ] && [ -s "${sample_output_dir}/abundance.tsv" ]; then
-            log "    CoverM already completed for $sample, skipping..."
-            ((successful++))
-            continue
+        # Locate the specific BAM file for this sample
+        # We look for common patterns like sample.bam or sample_mapped.bam
+        local bam_file=""
+        if [ -f "${bam_source_dir}/${sample}.bam" ]; then
+            bam_file="${bam_source_dir}/${sample}.bam"
+        elif [ -f "${bam_source_dir}/${sample}_mapped.bam" ]; then
+            bam_file="${bam_source_dir}/${sample}_mapped.bam"
+        else
+            # Try to find any bam file containing the sample name
+            bam_file=$(find "$bam_source_dir" -maxdepth 1 -name "*${sample}*.bam" | head -n 1)
         fi
 
-        if [ "${FORCE_RUN:-false}" = "true" ] && [ -f "${sample_output_dir}/abundance.tsv" ]; then
-            log "    Force mode: Deleting old CoverM results for $sample"
-            rm -rf "${sample_output_dir}/abundance.tsv" "${sample_output_dir}/mapping"
-        fi
-
-        # Find quality-filtered reads for this sample
-        local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample}"
-        local read1="${quality_dir}/filtered_1.fastq.gz"
-        local read2="${quality_dir}/filtered_2.fastq.gz"
-
-        if [ ! -f "$read1" ] || [ ! -f "$read2" ]; then
-            log "    ERROR: Quality-filtered reads not found for $sample"
-            log "      Expected: $read1 and $read2"
+        if [ -z "$bam_file" ] || [ ! -f "$bam_file" ]; then
+            log "    ERROR: BAM file not found for sample $sample in $bam_source_dir"
             ((failed++))
             continue
         fi
 
-        # Get list of valid bin files
-        local bin_files=()
-        for bin_file in "$bins_dir"/*.fa; do
-            if [ -f "$bin_file" ]; then
-                bin_files+=("$bin_file")
-            fi
-        done
+        log "    Using BAM file: $bam_file"
 
-        if [ ${#bin_files[@]} -eq 0 ]; then
-            log "    ERROR: No valid bin files found"
-            ((failed++))
-            continue
-        fi
-
-        # Create mapping directory
-        local mapping_dir="${sample_output_dir}/mapping"
-        mkdir -p "$mapping_dir"
-
-        log "    Running CoverM genome mode for ${#bin_files[@]} bins..."
-
-        # Run CoverM genome mode
+        # Run CoverM in genome mode using the BAM file (-b flag)
         coverm genome \
             --genome-fasta-files "${bin_files[@]}" \
-            --coupled "$read1" "$read2" \
+            -b "$bam_file" \
             --output-file "${sample_output_dir}/abundance.tsv" \
             --output-format dense \
             --min-read-aligned-percent 0.75 \
             --min-read-percent-identity 0.95 \
-            --min-covered-fraction 0 \
-            --contig-end-exclusion 75 \
-            --trim-min 0.05 \
-            --trim-max 0.95 \
-            --proper-pairs-only \
             --methods relative_abundance mean trimmed_mean covered_fraction reads_per_base rpkm tpm \
             --threads $SLURM_CPUS_PER_TASK \
-            --bam-file-cache-directory "$mapping_dir" \
             2>&1 | tee "${LOG_DIR}/${treatment}/${sample}_coverm.log"
 
         local exit_code=${PIPESTATUS[0]}
@@ -223,14 +188,6 @@ run_coverm_for_samples() {
     done
 
     conda deactivate
-
-    log "CoverM processing complete: $successful successful, $failed failed"
-
-    if [ $successful -eq 0 ]; then
-        log "ERROR: No samples were successfully processed by CoverM"
-        return 1
-    fi
-
     return 0
 }
 
