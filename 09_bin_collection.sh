@@ -43,11 +43,15 @@ TEMP_DIR=$(setup_temp_dir)
 
 log "====== Starting Bin Collection for treatment $TREATMENT ======"
 
-# Check if stage already completed
-if check_treatment_checkpoint "$TREATMENT" "bin_collection"; then
+# Check if stage already completed (skip if --force flag used)
+if [ "${FORCE_RUN:-false}" != "true" ] && check_treatment_checkpoint "$TREATMENT" "bin_collection"; then
     log "Bin collection already completed for treatment $TREATMENT"
     cleanup_temp_dir "$TEMP_DIR"
     exit 0
+fi
+
+if [ "${FORCE_RUN:-false}" = "true" ]; then
+    log "Force mode enabled: Re-running bin collection even if previously completed"
 fi
 
 # Output directory for this treatment
@@ -145,11 +149,16 @@ run_coverm_for_samples() {
         local sample_output_dir="${OUTPUT_DIR}/coverm/${treatment}/${sample}"
         mkdir -p "$sample_output_dir"
 
-        # Check if already completed
-        if [ -f "${sample_output_dir}/abundance.tsv" ] && [ -s "${sample_output_dir}/abundance.tsv" ]; then
+        # Check if already completed (skip if --force flag used)
+        if [ "${FORCE_RUN:-false}" != "true" ] && [ -f "${sample_output_dir}/abundance.tsv" ] && [ -s "${sample_output_dir}/abundance.tsv" ]; then
             log "    CoverM already completed for $sample, skipping..."
             ((successful++))
             continue
+        fi
+
+        if [ "${FORCE_RUN:-false}" = "true" ] && [ -f "${sample_output_dir}/abundance.tsv" ]; then
+            log "    Force mode: Deleting old CoverM results for $sample"
+            rm -rf "${sample_output_dir}/abundance.tsv" "${sample_output_dir}/mapping"
         fi
 
         # Find quality-filtered reads for this sample
