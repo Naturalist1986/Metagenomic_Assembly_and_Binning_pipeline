@@ -48,11 +48,15 @@ if [ "${TREATMENT_LEVEL_BINNING:-false}" = "true" ] || [ "${ASSEMBLY_MODE:-indiv
 
     log "====== Starting Bin Selection for treatment $TREATMENT (treatment-level mode) ======"
 
-    # Check if stage already completed for treatment
-    if check_treatment_checkpoint "$TREATMENT" "bin_selection"; then
+    # Check if stage already completed for treatment (skip if --force flag used)
+    if [ "${FORCE_RUN:-false}" != "true" ] && check_treatment_checkpoint "$TREATMENT" "bin_selection"; then
         log "Bin selection already completed for treatment $TREATMENT"
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
+    fi
+
+    if [ "${FORCE_RUN:-false}" = "true" ]; then
+        log "Force mode enabled: Re-running bin selection even if previously completed"
     fi
 
 else
@@ -75,11 +79,15 @@ else
 
     log "====== Starting Bin Selection for $SAMPLE_NAME ($TREATMENT) ======"
 
-    # Check if stage already completed for sample
-    if check_sample_checkpoint "$SAMPLE_NAME" "bin_selection"; then
+    # Check if stage already completed for sample (skip if --force flag used)
+    if [ "${FORCE_RUN:-false}" != "true" ] && check_sample_checkpoint "$SAMPLE_NAME" "bin_selection"; then
         log "Bin selection already completed for $SAMPLE_NAME"
         cleanup_temp_dir "$TEMP_DIR"
         exit 0
+    fi
+
+    if [ "${FORCE_RUN:-false}" = "true" ]; then
+        log "Force mode enabled: Re-running bin selection even if previously completed"
     fi
 fi
 
@@ -108,8 +116,8 @@ stage_bin_selection() {
 
     mkdir -p "$output_dir"
 
-    # Check if already processed
-    if [ -f "${output_dir}/bin_selection_complete.flag" ]; then
+    # Check if already processed (skip if --force flag used)
+    if [ "${FORCE_RUN:-false}" != "true" ] && [ -f "${output_dir}/bin_selection_complete.flag" ]; then
         log "Bin selection already completed for $entity_desc, skipping..."
         return 0
     fi
