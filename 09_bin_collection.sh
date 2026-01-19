@@ -113,6 +113,7 @@ collect_selected_bins() {
 # Function to run CoverM for each sample
 # Function to run CoverM for each sample using existing BAM files
 # Function to run CoverM for each sample using INDIVIDUAL assembly BAM files
+# Function to run CoverM for each sample using INDIVIDUAL assembly BAM files
 run_coverm_for_samples() {
     local treatment="$1"
     local samples_str="$2"
@@ -138,10 +139,11 @@ run_coverm_for_samples() {
         local sample_output_dir="${OUTPUT_DIR}/coverm/${treatment}/${sample}"
         mkdir -p "$sample_output_dir"
 
-        # Define the sample-specific BAM source directory (Individual Assembly mode)
+        # DYNAMIC PATH: Points to the individual assembly BAM directory for this specific sample
+        # Path: /.../binning/carR/carR_1/shared_bam_files/
         local bam_source_dir="${OUTPUT_DIR}/binning/${treatment}/${sample}/shared_bam_files"
         
-        # Locate the specific BAM file for this sample in its own directory
+        # Locate the specific BAM file for this sample (e.g., carR_1.sorted.bam)
         local bam_file=$(find "$bam_source_dir" -maxdepth 1 -name "*${sample}*.bam" | head -n 1)
 
         if [ -z "$bam_file" ] || [ ! -f "$bam_file" ]; then
@@ -152,7 +154,8 @@ run_coverm_for_samples() {
 
         log "    Using sample-specific BAM: $bam_file"
 
-        # Run CoverM with --min-covered-fraction 0 to fix version 0.7.0 estimators
+        # Run CoverM with the fix for version 0.7.0 estimators
+        # --min-covered-fraction 0 ensures reads_per_base calculation doesn't crash
         coverm genome \
             --genome-fasta-files "${bin_files[@]}" \
             -b "$bam_file" \
