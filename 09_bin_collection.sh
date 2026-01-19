@@ -112,27 +112,17 @@ collect_selected_bins() {
 }
 # Function to run CoverM for each sample
 # Function to run CoverM for each sample using existing BAM files
+# Function to run CoverM for each sample using INDIVIDUAL assembly BAM files
 run_coverm_for_samples() {
     local treatment="$1"
     local samples_str="$2"
     local bins_dir="$3"
 
-    log "Running CoverM abundance calculation using PRE-EXISTING BAM files for treatment $treatment..."
-
-    # Define the custom BAM source directory
-    # Note: Using the path provided, assuming 'treatment' in the path should be the actual treatment name
-    local bam_source_dir="/sci/backup/ofinkel/moshea/Efrat_Metagenomes_Novogene/coassembly/binning/${treatment}/shared_bam_files"
-    
-    log "  Source BAM directory: $bam_source_dir"
+    log "Running CoverM abundance calculation using INDIVIDUAL BAM files for treatment $treatment..."
 
     # Convert samples string to array
     local samples=($samples_str)
-
-    # Validate bins directory
-    if [ ! -d "$bins_dir" ]; then
-        log "ERROR: Bins directory not found: $bins_dir"
-        return 1
-    fi
+    local bin_files=("$bins_dir"/*.fa)
 
     # Activate CoverM environment
     activate_env checkm
@@ -141,9 +131,6 @@ run_coverm_for_samples() {
     local successful=0
     local failed=0
 
-    # Get list of bin files
-    local bin_files=("$bins_dir"/*.fa)
-
     for sample in "${samples[@]}"; do
         log "  Processing sample: $sample"
 
@@ -151,27 +138,21 @@ run_coverm_for_samples() {
         local sample_output_dir="${OUTPUT_DIR}/coverm/${treatment}/${sample}"
         mkdir -p "$sample_output_dir"
 
-        # Locate the specific BAM file for this sample
-        # We look for common patterns like sample.bam or sample_mapped.bam
-        local bam_file=""
-        if [ -f "${bam_source_dir}/${sample}.bam" ]; then
-            bam_file="${bam_source_dir}/${sample}.bam"
-        elif [ -f "${bam_source_dir}/${sample}_mapped.bam" ]; then
-            bam_file="${bam_source_dir}/${sample}_mapped.bam"
-        else
-            # Try to find any bam file containing the sample name
-            bam_file=$(find "$bam_source_dir" -maxdepth 1 -name "*${sample}*.bam" | head -n 1)
-        fi
+        # Define the sample-specific BAM source directory (Individual Assembly mode)
+        local bam_source_dir="${OUTPUT_DIR}/binning/${treatment}/${sample}/shared_bam_files"
+        
+        # Locate the specific BAM file for this sample in its own directory
+        local bam_file=$(find "$bam_source_dir" -maxdepth 1 -name "*${sample}*.bam" | head -n 1)
 
         if [ -z "$bam_file" ] || [ ! -f "$bam_file" ]; then
-            log "    ERROR: BAM file not found for sample $sample in $bam_source_dir"
+            log "    ERROR: Individual BAM file not found for sample $sample in $bam_source_dir"
             ((failed++))
             continue
         fi
 
-        log "    Using BAM file: $bam_file"
+        log "    Using sample-specific BAM: $bam_file"
 
-        # Run CoverM in genome mode using the BAM file (-b flag)
+        # Run CoverM with --min-covered-fraction 0 to fix version 0.7.0 estimators
         coverm genome \
             --genome-fasta-files "${bin_files[@]}" \
             -b "$bam_file" \
