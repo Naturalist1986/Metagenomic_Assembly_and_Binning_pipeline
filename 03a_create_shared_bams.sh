@@ -38,11 +38,17 @@ create_bam_for_sample() {
 
     log "Creating BAM for sample $sample_name..."
 
-    # Check if BAM already exists
-    if [ -f "${output_dir}/${sample_name}.sorted.bam" ] && \
+    # Check if BAM already exists (skip if --force flag used)
+    if [ "${FORCE_RUN:-false}" != "true" ] && \
+       [ -f "${output_dir}/${sample_name}.sorted.bam" ] && \
        [ -f "${output_dir}/${sample_name}.sorted.bam.bai" ]; then
         log "BAM already exists for $sample_name, skipping..."
         return 0
+    fi
+
+    if [ "${FORCE_RUN:-false}" = "true" ] && [ -f "${output_dir}/${sample_name}.sorted.bam" ]; then
+        log "Force mode: Deleting existing BAM for $sample_name"
+        rm -f "${output_dir}/${sample_name}.sorted.bam" "${output_dir}/${sample_name}.sorted.bam.bai"
     fi
 
     # Activate environment with bowtie2 and samtools
