@@ -5,7 +5,7 @@
 
 # Default values
 START_STAGE=0  # Start from quality filtering by default (skip optional merge/plasmid stages)
-END_STAGE=6    # Updated: removed reassembly, magpurify, and checkm2 stages (Binette runs checkm2)
+END_STAGE=7    # Updated: includes coverage consolidation across all treatments
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PIPELINE_SCRIPT_DIR="$SCRIPT_DIR"  # Export for SLURM jobs
 
@@ -32,8 +32,8 @@ Master script to run the complete metagenomic pipeline.
 Supports multiple sample sheet formats including multi-run datasets.
 
 OPTIONS:
-    -s, --start-stage NUM         Start from stage NUM (0 to 6) [default: 0]
-    -e, --end-stage NUM           End at stage NUM (0 to 6) [default: 6]
+    -s, --start-stage NUM         Start from stage NUM (0 to 7) [default: 0]
+    -e, --end-stage NUM           End at stage NUM (0 to 7) [default: 7]
     -a, --assembly-mode MODE      Assembly mode: 'individual' or 'coassembly' [default: individual]
     -b, --treatment-level-binning Use treatment-level binning instead of sample-level
     --per-sample-cross-mapping    Map all treatment samples to each sample's assembly (individual mode only)
@@ -90,6 +90,7 @@ STAGES:
     4  - Consensus Binning (Binette - combines all 5 bin sets, runs CheckM2)
     5  - Bin Selection (selects high-quality bins based on Binette's CheckM2 results)
     6  - Bin Collection (per treatment: collects selected bins, runs CoverM & GTDB-Tk)
+    7  - Coverage Consolidation (consolidates bins and coverage across all treatments)
 
 OPTIONAL STAGES (use flags to enable):
     --merge-lanes        Lane/Run Detection & Merge (auto-detects and merges multiple lanes/runs)
@@ -413,14 +414,14 @@ is_in_array() {
     return 1
 }
 
-# Function to validate stage numbers (0-6)
+# Function to validate stage numbers (0-7)
 validate_stage() {
     local stage="$1"
     local stage_name="$2"
 
-    # Check if it's a valid stage number (0-6 only)
-    if ! [[ "$stage" =~ ^[0-6]$ ]]; then
-        echo "Error: $stage_name must be 0-6"
+    # Check if it's a valid stage number (0-7 only)
+    if ! [[ "$stage" =~ ^[0-7]$ ]]; then
+        echo "Error: $stage_name must be 0-7"
         return 1
     fi
     return 0
@@ -518,6 +519,7 @@ declare -A STAGE_NAMES=(
     [4]="Bin Refinement"
     [5]="Bin Selection"
     [6]="Bin Collection (per treatment: collect bins, CoverM abundance, GTDB-Tk)"
+    [7]="Coverage Consolidation (all treatments: consolidate bins, coverage, taxonomy, quality)"
 )
 
 declare -A STAGE_SCRIPTS=(
@@ -528,6 +530,7 @@ declare -A STAGE_SCRIPTS=(
     [4]="04_bin_refinement.sh"
     [5]="08_bin_selection.sh"
     [6]="09_bin_collection.sh"
+    [7]="12_coverage_consolidation.sh"
 )
 
 # Optional stage scripts (only run if flags are set)
@@ -851,6 +854,10 @@ calculate_array_size() {
         else
             echo "0"
         fi
+    elif [ "$stage" = "7" ]; then
+        # Stage 7: Coverage Consolidation - runs once for entire pipeline (not array-based)
+        # Consolidates all bins and coverage data across all treatments
+        echo "1"
     else
         # Unknown stage
         echo "0"
@@ -961,6 +968,9 @@ get_filtered_indices() {
                 indices+=($i)
             done
         fi
+    elif [ "$stage" = "7" ]; then
+        # Stage 7: Coverage Consolidation - runs once (index 0)
+        indices+=(0)
     fi
 
     echo "${indices[@]}"
