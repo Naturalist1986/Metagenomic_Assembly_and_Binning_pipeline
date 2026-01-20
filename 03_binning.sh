@@ -167,6 +167,23 @@ run_concoct() {
 
     # Step 5: Extract bins as FASTA files
     log "Extracting CONCOCT bins..."
+
+    # Check if clustering file exists and has content
+    if [ ! -f "${concoct_work}/concoct_clustering_merged.csv" ]; then
+        log "✗ CONCOCT failed: Merged clustering file not found"
+        conda deactivate
+        return 1
+    fi
+
+    local cluster_lines=$(wc -l < "${concoct_work}/concoct_clustering_merged.csv")
+    log "  Clustering file has $cluster_lines entries"
+
+    if [ $cluster_lines -lt 2 ]; then
+        log "✗ CONCOCT failed: Clustering file is empty or has no clusters"
+        conda deactivate
+        return 1
+    fi
+
     extract_fasta_bins.py \
         "$assembly" \
         "${concoct_work}/concoct_clustering_merged.csv" \
@@ -176,6 +193,15 @@ run_concoct() {
     conda deactivate
 
     if [ $exit_code -eq 0 ]; then
+        # Count bins before renaming
+        local initial_bin_count=$(ls -1 "$concoct_dir"/*.fa 2>/dev/null | wc -l)
+        log "  Created $initial_bin_count bin files"
+
+        if [ $initial_bin_count -eq 0 ]; then
+            log "✗ CONCOCT failed: No bins were created (clustering may have failed)"
+            return 1
+        fi
+
         # Rename bins to match naming convention (bin.X.fa)
         local counter=1
         for f in "$concoct_dir"/*.fa; do
