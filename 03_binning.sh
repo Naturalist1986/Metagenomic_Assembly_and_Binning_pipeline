@@ -165,10 +165,7 @@ run_concoct() {
         "${concoct_work}/concoct_output_clustering_gt1000.csv" \
         > "${concoct_work}/concoct_clustering_merged.csv"
 
-    # Step 5: Extract bins as FASTA files
-    log "Extracting CONCOCT bins..."
-
-    # Check if clustering file exists and has content
+    # Validate merged clustering file
     if [ ! -f "${concoct_work}/concoct_clustering_merged.csv" ]; then
         log "✗ CONCOCT failed: Merged clustering file not found"
         conda deactivate
@@ -184,9 +181,67 @@ run_concoct() {
         return 1
     fi
 
+    # Step 4.5: Filter clustering file to only include contigs that exist in assembly
+    # This prevents KeyError when extract_fasta_bins.py tries to find missing contigs
+    log "Validating contig IDs against assembly..."
+
+    # Get list of contig IDs from assembly
+    grep "^>" "$assembly" | sed 's/^>//' | cut -f1 -d' ' > "${concoct_work}/assembly_contig_ids.txt"
+    local assembly_contig_count=$(wc -l < "${concoct_work}/assembly_contig_ids.txt")
+    log "  Assembly contains $assembly_contig_count contigs"
+
+    # Filter clustering file to only include existing contigs
+    python3 -c "$(cat <<'PYTHON_FILTER'
+import sys
+import os
+
+work_dir = sys.argv[1]
+
+# Read assembly contig IDs
+with open(f"{work_dir}/assembly_contig_ids.txt") as f:
+    valid_contigs = set(line.strip() for line in f)
+
+# Filter clustering file
+input_file = f"{work_dir}/concoct_clustering_merged.csv"
+output_file = f"{work_dir}/concoct_clustering_filtered.csv"
+
+valid_count = 0
+invalid_count = 0
+invalid_contigs = []
+
+with open(input_file) as infile, open(output_file, 'w') as outfile:
+    for line in infile:
+        contig_id = line.split(',')[0].strip()
+        if contig_id in valid_contigs:
+            outfile.write(line)
+            valid_count += 1
+        else:
+            invalid_count += 1
+            if len(invalid_contigs) < 10:
+                invalid_contigs.append(contig_id)
+
+print(f"  Valid contigs in clustering: {valid_count}")
+print(f"  Invalid contigs filtered out: {invalid_count}")
+if invalid_contigs:
+    print(f"  Example invalid IDs: {', '.join(invalid_contigs[:5])}")
+PYTHON_FILTER
+)" "${concoct_work}"
+
+    # Check if filtering produced any valid contigs
+    local filtered_lines=$(wc -l < "${concoct_work}/concoct_clustering_filtered.csv")
+    if [ $filtered_lines -lt 1 ]; then
+        log "✗ CONCOCT failed: No valid contigs in clustering results"
+        log "  All contig IDs in clustering file are missing from assembly"
+        conda deactivate
+        return 1
+    fi
+
+    # Step 5: Extract bins as FASTA files using filtered clustering
+    log "Extracting CONCOCT bins..."
+
     extract_fasta_bins.py \
         "$assembly" \
-        "${concoct_work}/concoct_clustering_merged.csv" \
+        "${concoct_work}/concoct_clustering_filtered.csv" \
         --output_path "$concoct_dir" 2>&1 | tail -20
 
     local exit_code=$?
