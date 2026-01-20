@@ -110,16 +110,25 @@ collect_selected_bins() {
     echo "$collected_bins_dir|$copied_count"
     return 0
 }
+<<<<<<< HEAD
 # Function to run CoverM for each sample
 # Function to run CoverM for each sample using existing BAM files
 # Function to run CoverM for each sample using INDIVIDUAL assembly BAM files
 # Function to run CoverM for each sample using INDIVIDUAL assembly BAM files
+=======
+
+# Function to run CoverM for each sample using pre-existing BAM files from binning stage
+>>>>>>> claude/modify-comebin-binning-yC89l
 run_coverm_for_samples() {
     local treatment="$1"
     local samples_str="$2"
     local bins_dir="$3"
 
+<<<<<<< HEAD
     log "Running CoverM abundance calculation using INDIVIDUAL BAM files for treatment $treatment..."
+=======
+    log "Running CoverM abundance calculation for treatment $treatment using existing BAM files..."
+>>>>>>> claude/modify-comebin-binning-yC89l
 
     # Convert samples string to array
     local samples=($samples_str)
@@ -146,12 +155,35 @@ run_coverm_for_samples() {
         # Locate the specific BAM file for this sample (e.g., carR_1.sorted.bam)
         local bam_file=$(find "$bam_source_dir" -maxdepth 1 -name "*${sample}*.bam" | head -n 1)
 
+<<<<<<< HEAD
         if [ -z "$bam_file" ] || [ ! -f "$bam_file" ]; then
             log "    ERROR: Individual BAM file not found for sample $sample in $bam_source_dir"
+=======
+        if [ "${FORCE_RUN:-false}" = "true" ] && [ -f "${sample_output_dir}/abundance.tsv" ]; then
+            log "    Force mode: Deleting old CoverM results for $sample"
+            rm -rf "${sample_output_dir}/abundance.tsv" "${sample_output_dir}/mapping"
+        fi
+
+        # Find existing BAM file from binning stage (stage 3)
+        # Check for coassembly mode BAM location first
+        local bam_file="${OUTPUT_DIR}/binning/${treatment}/shared_bam_files/${sample}.sorted.bam"
+
+        # If not found, check sample-level BAM location
+        if [ ! -f "$bam_file" ]; then
+            bam_file="${OUTPUT_DIR}/binning/${treatment}/${sample}/shared_bam_files/${sample}.sorted.bam"
+        fi
+
+        if [ ! -f "$bam_file" ]; then
+            log "    ERROR: BAM file not found for sample $sample"
+            log "      Checked coassembly location: ${OUTPUT_DIR}/binning/${treatment}/shared_bam_files/${sample}.sorted.bam"
+            log "      Checked sample location: ${OUTPUT_DIR}/binning/${treatment}/${sample}/shared_bam_files/${sample}.sorted.bam"
+            log "      BAM files from binning stage (stage 3) are required for CoverM"
+>>>>>>> claude/modify-comebin-binning-yC89l
             ((failed++))
             continue
         fi
 
+<<<<<<< HEAD
         log "    Using sample-specific BAM: $bam_file"
 
         # Run CoverM with the fix for version 0.7.0 estimators
@@ -159,6 +191,31 @@ run_coverm_for_samples() {
         coverm genome \
             --genome-fasta-files "${bin_files[@]}" \
             -b "$bam_file" \
+=======
+        log "    Using existing BAM file: $bam_file"
+
+        # Get list of valid bin files
+        local bin_files=()
+        for bin_file in "$bins_dir"/*.fa; do
+            if [ -f "$bin_file" ]; then
+                bin_files+=("$bin_file")
+            fi
+        done
+
+        if [ ${#bin_files[@]} -eq 0 ]; then
+            log "    ERROR: No valid bin files found"
+            ((failed++))
+            continue
+        fi
+
+        log "    Running CoverM genome mode for ${#bin_files[@]} bins using existing BAM..."
+
+        # Run CoverM genome mode using pre-existing BAM from binning stage
+        # This is much faster than re-mapping reads
+        coverm genome \
+            --genome-fasta-files "${bin_files[@]}" \
+            --bam-files "$bam_file" \
+>>>>>>> claude/modify-comebin-binning-yC89l
             --output-file "${sample_output_dir}/abundance.tsv" \
             --output-format dense \
             --min-read-aligned-percent 0.75 \
@@ -492,6 +549,8 @@ Output Files:
 Processing Details:
 -------------------
 - Selected bins source: ${OUTPUT_DIR}/selected_bins/${treatment}/
+- CoverM BAM files: ${OUTPUT_DIR}/binning/${treatment}/shared_bam_files/ (from stage 3)
+- CoverM abundance results: ${OUTPUT_DIR}/coverm/${treatment}/[samples]/
 - GTDB-Tk database: ${GTDBTK_DATA_PATH:-Not set}
 
 Quality Standards (from stage 7.5):
