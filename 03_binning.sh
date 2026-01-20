@@ -188,7 +188,8 @@ run_concoct() {
         log "✓ CONCOCT completed: $bin_count bins"
         return 0
     else
-        log "✗ CONCOCT failed"
+        log "✗ CONCOCT failed: extract_fasta_bins.py returned exit code $exit_code"
+        log "  Check the output above for error details"
         return 1
     fi
 }
