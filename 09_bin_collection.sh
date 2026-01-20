@@ -492,7 +492,6 @@ Output Files:
 Processing Details:
 -------------------
 - Selected bins source: ${OUTPUT_DIR}/selected_bins/${treatment}/
-- CoverM data sources: ${OUTPUT_DIR}/coverm/${treatment}/[samples]/
 - GTDB-Tk database: ${GTDBTK_DATA_PATH:-Not set}
 
 Quality Standards (from stage 7.5):
