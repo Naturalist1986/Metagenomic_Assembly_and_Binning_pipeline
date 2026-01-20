@@ -170,7 +170,7 @@ run_concoct() {
     extract_fasta_bins.py \
         "$assembly" \
         "${concoct_work}/concoct_clustering_merged.csv" \
-        --output_path "$concoct_dir"
+        --output_path "$concoct_dir" 2>&1 | tail -20
 
     local exit_code=$?
     conda deactivate
