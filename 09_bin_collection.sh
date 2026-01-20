@@ -103,13 +103,13 @@ collect_selected_bins() {
     return 0
 }
 
-# Function to run CoverM for each sample
+# Function to run CoverM for each sample using pre-existing BAM files from binning stage
 run_coverm_for_samples() {
     local treatment="$1"
     local samples_str="$2"
     local bins_dir="$3"
 
-    log "Running CoverM abundance calculation for treatment $treatment..."
+    log "Running CoverM abundance calculation for treatment $treatment using existing BAM files..."
 
     # Convert samples string to array
     local samples=($samples_str)
@@ -161,17 +161,25 @@ run_coverm_for_samples() {
             rm -rf "${sample_output_dir}/abundance.tsv" "${sample_output_dir}/mapping"
         fi
 
-        # Find quality-filtered reads for this sample
-        local quality_dir="${OUTPUT_DIR}/quality_filtering/${treatment}/${sample}"
-        local read1="${quality_dir}/filtered_1.fastq.gz"
-        local read2="${quality_dir}/filtered_2.fastq.gz"
+        # Find existing BAM file from binning stage (stage 3)
+        # Check for coassembly mode BAM location first
+        local bam_file="${OUTPUT_DIR}/binning/${treatment}/shared_bam_files/${sample}.sorted.bam"
 
-        if [ ! -f "$read1" ] || [ ! -f "$read2" ]; then
-            log "    ERROR: Quality-filtered reads not found for $sample"
-            log "      Expected: $read1 and $read2"
+        # If not found, check sample-level BAM location
+        if [ ! -f "$bam_file" ]; then
+            bam_file="${OUTPUT_DIR}/binning/${treatment}/${sample}/shared_bam_files/${sample}.sorted.bam"
+        fi
+
+        if [ ! -f "$bam_file" ]; then
+            log "    ERROR: BAM file not found for sample $sample"
+            log "      Checked coassembly location: ${OUTPUT_DIR}/binning/${treatment}/shared_bam_files/${sample}.sorted.bam"
+            log "      Checked sample location: ${OUTPUT_DIR}/binning/${treatment}/${sample}/shared_bam_files/${sample}.sorted.bam"
+            log "      BAM files from binning stage (stage 3) are required for CoverM"
             ((failed++))
             continue
         fi
+
+        log "    Using existing BAM file: $bam_file"
 
         # Get list of valid bin files
         local bin_files=()
@@ -187,16 +195,13 @@ run_coverm_for_samples() {
             continue
         fi
 
-        # Create mapping directory
-        local mapping_dir="${sample_output_dir}/mapping"
-        mkdir -p "$mapping_dir"
+        log "    Running CoverM genome mode for ${#bin_files[@]} bins using existing BAM..."
 
-        log "    Running CoverM genome mode for ${#bin_files[@]} bins..."
-
-        # Run CoverM genome mode
+        # Run CoverM genome mode using pre-existing BAM from binning stage
+        # This is much faster than re-mapping reads
         coverm genome \
             --genome-fasta-files "${bin_files[@]}" \
-            --coupled "$read1" "$read2" \
+            --bam-files "$bam_file" \
             --output-file "${sample_output_dir}/abundance.tsv" \
             --output-format dense \
             --min-read-aligned-percent 0.75 \
@@ -208,7 +213,6 @@ run_coverm_for_samples() {
             --proper-pairs-only \
             --methods relative_abundance mean trimmed_mean covered_fraction reads_per_base rpkm tpm \
             --threads $SLURM_CPUS_PER_TASK \
-            --bam-file-cache-directory "$mapping_dir" \
             2>&1 | tee "${LOG_DIR}/${treatment}/${sample}_coverm.log"
 
         local exit_code=${PIPESTATUS[0]}
@@ -543,7 +547,8 @@ Output Files:
 Processing Details:
 -------------------
 - Selected bins source: ${OUTPUT_DIR}/selected_bins/${treatment}/
-- CoverM data sources: ${OUTPUT_DIR}/coverm/${treatment}/[samples]/
+- CoverM BAM files: ${OUTPUT_DIR}/binning/${treatment}/shared_bam_files/ (from stage 3)
+- CoverM abundance results: ${OUTPUT_DIR}/coverm/${treatment}/[samples]/
 - GTDB-Tk database: ${GTDBTK_DATA_PATH:-Not set}
 
 Quality Standards (from stage 7.5):
