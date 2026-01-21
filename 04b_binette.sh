@@ -111,9 +111,30 @@ run_binette() {
     log "Running Binette command:"
     log "$binette_cmd"
 
-    $binette_cmd 2>&1 | tee "${LOG_DIR}/${TREATMENT}_binette.log"
+    # Run Binette and capture output (tee shows output in real-time and saves to log)
+    local binette_log="${LOG_DIR}/${TREATMENT}_binette.log"
+    mkdir -p "${LOG_DIR}"
+
+    $binette_cmd 2>&1 | tee "$binette_log"
 
     local exit_code=${PIPESTATUS[0]}
+
+    # Show summary of output for quick diagnosis
+    log ""
+    log "=== Binette Execution Summary ==="
+    if [ -f "$binette_log" ]; then
+        local log_lines=$(wc -l < "$binette_log")
+        log "Full log: $binette_log ($log_lines lines)"
+
+        # Show key errors or warnings
+        if grep -qi "error\|traceback\|exception" "$binette_log"; then
+            log "Errors detected in log:"
+            grep -i "error\|traceback\|exception" "$binette_log" | tail -10 | while IFS= read -r line; do
+                log "  ERROR: $line"
+            done
+        fi
+    fi
+
     conda deactivate
 
     if [ $exit_code -eq 0 ] && [ -d "${output_dir}/final_bins" ]; then
@@ -123,12 +144,15 @@ run_binette() {
     else
         log "✗ Binette failed with exit code: $exit_code"
 
-        # Show last 30 lines of Binette log for debugging
-        if [ -f "${LOG_DIR}/${TREATMENT}_binette.log" ]; then
-            log "Last 30 lines of Binette output:"
-            tail -30 "${LOG_DIR}/${TREATMENT}_binette.log" | while IFS= read -r line; do
+        # Show last 50 lines for full context
+        if [ -f "$binette_log" ]; then
+            log ""
+            log "=== Last 50 lines of Binette output ==="
+            tail -50 "$binette_log" | while IFS= read -r line; do
                 log "  $line"
             done
+        else
+            log "WARNING: Binette log file not found at: $binette_log"
         fi
 
         return 1
