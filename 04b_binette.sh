@@ -52,14 +52,36 @@ run_binette() {
     local bin_dirs_args=""
     local valid_count=0
     for bin_dir in "${bin_dirs[@]}"; do
-        if [ -d "$bin_dir" ] && [ "$(ls -A ${bin_dir}/*.fa 2>/dev/null)" ]; then
-            local bin_count=$(ls -1 "${bin_dir}"/*.fa 2>/dev/null | wc -l)
-            log "  Including bin set: $bin_dir ($bin_count bins)"
-            bin_dirs_args="$bin_dirs_args --bin_dirs $bin_dir"
-            ((valid_count++))
-        else
-            log "  WARNING: Skipping empty/missing bin directory: $bin_dir"
+        if [ ! -d "$bin_dir" ]; then
+            log "  WARNING: Skipping missing bin directory: $bin_dir"
+            continue
         fi
+
+        # Check for both .fa and .fa.gz files
+        local fa_count=$(ls -1 "${bin_dir}"/*.fa 2>/dev/null | wc -l)
+        local fagz_count=$(ls -1 "${bin_dir}"/*.fa.gz 2>/dev/null | wc -l)
+        local total_bins=$((fa_count + fagz_count))
+
+        if [ $total_bins -eq 0 ]; then
+            log "  WARNING: Skipping empty bin directory: $bin_dir"
+            continue
+        fi
+
+        # If there are .fa.gz files, decompress them first
+        if [ $fagz_count -gt 0 ]; then
+            log "  Decompressing $fagz_count gzipped bins in $bin_dir..."
+            for gz_file in "${bin_dir}"/*.fa.gz; do
+                if [ -f "$gz_file" ]; then
+                    gunzip -f "$gz_file" 2>&1 | head -5
+                fi
+            done
+            # Update counts after decompression
+            fa_count=$(ls -1 "${bin_dir}"/*.fa 2>/dev/null | wc -l)
+        fi
+
+        log "  Including bin set: $bin_dir ($fa_count bins)"
+        bin_dirs_args="$bin_dirs_args --bin_dirs $bin_dir"
+        ((valid_count++))
     done
 
     if [ -z "$bin_dirs_args" ]; then
@@ -100,6 +122,15 @@ run_binette() {
         return 0
     else
         log "✗ Binette failed with exit code: $exit_code"
+
+        # Show last 30 lines of Binette log for debugging
+        if [ -f "${LOG_DIR}/${TREATMENT}_binette.log" ]; then
+            log "Last 30 lines of Binette output:"
+            tail -30 "${LOG_DIR}/${TREATMENT}_binette.log" | while IFS= read -r line; do
+                log "  $line"
+            done
+        fi
+
         return 1
     fi
 }
