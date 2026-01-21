@@ -143,35 +143,9 @@ run_binette() {
                 for bin_file in "${bin_dir}"/*.fa; do
                     if [ -f "$bin_file" ]; then
                         local norm_file="${norm_dir}/$(basename $bin_file)"
-                        python3 << 'PYTHON_NORMALIZE'
-import sys
-input_file = sys.argv[1]
-output_file = sys.argv[2]
 
-with open(input_file) as infile, open(output_file, 'w') as outfile:
-    for line in infile:
-        if line.startswith('>'):
-            # Keep only the first field of the header (contig ID)
-            contig_id = line[1:].split()[0]
-            outfile.write(f'>{contig_id}\n')
-        else:
-            outfile.write(line)
-PYTHON_NORMALIZE
-                        python3 -c "$(cat << 'PYTHON_NORMALIZE'
-import sys
-input_file = sys.argv[1]
-output_file = sys.argv[2]
-
-with open(input_file) as infile, open(output_file, 'w') as outfile:
-    for line in infile:
-        if line.startswith('>'):
-            # Keep only the first field of the header (contig ID)
-            contig_id = line[1:].split()[0]
-            outfile.write(f'>{contig_id}\n')
-        else:
-            outfile.write(line)
-PYTHON_NORMALIZE
-)" "$bin_file" "$norm_file"
+                        # Use sed to normalize contig IDs (faster and simpler than Python)
+                        sed '/^>/ s/\s.*//' "$bin_file" > "$norm_file"
                     fi
                 done
 
