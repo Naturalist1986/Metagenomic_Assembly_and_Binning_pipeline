@@ -94,6 +94,106 @@ run_binette() {
 
     mkdir -p "$output_dir"
 
+    # Validate contig IDs match between bins and assembly
+    log "Validating contig IDs between bins and assembly..."
+
+    # Extract contig IDs from assembly (first field only, no descriptions)
+    grep "^>" "$contigs_file" | sed 's/^>//' | cut -f1 -d' ' | sort -u > "${TEMP_DIR}/assembly_contigs.txt"
+    local assembly_contig_count=$(wc -l < "${TEMP_DIR}/assembly_contigs.txt")
+    log "  Assembly has $assembly_contig_count unique contigs"
+
+    # Check a sample bin for contig ID format
+    local sample_bin=$(find "${bin_dirs[@]}" -name "*.fa" -type f 2>/dev/null | head -1)
+    if [ -f "$sample_bin" ]; then
+        log "  Checking contig format in: $(basename $sample_bin)"
+        grep "^>" "$sample_bin" | head -3 | sed 's/^>//' > "${TEMP_DIR}/sample_bin_contigs.txt"
+
+        # Check if any of the sample contigs are in the assembly
+        local matches=0
+        while IFS= read -r contig_id; do
+            # Try exact match first
+            if grep -qFx "$contig_id" "${TEMP_DIR}/assembly_contigs.txt"; then
+                ((matches++))
+            else
+                # Try matching first field only (strip after first space)
+                local contig_base=$(echo "$contig_id" | cut -f1 -d' ')
+                if grep -qFx "$contig_base" "${TEMP_DIR}/assembly_contigs.txt"; then
+                    ((matches++))
+                fi
+            fi
+        done < "${TEMP_DIR}/sample_bin_contigs.txt"
+
+        log "  Sample check: $matches/3 contigs found in assembly"
+
+        if [ $matches -eq 0 ]; then
+            log "  WARNING: Contig ID format mismatch detected!"
+            log "  Sample bin contig:"
+            head -1 "${TEMP_DIR}/sample_bin_contigs.txt"
+            log "  Sample assembly contig:"
+            head -1 "${TEMP_DIR}/assembly_contigs.txt"
+            log "  Attempting to normalize contig IDs in bins..."
+
+            # Create normalized bin directories
+            local normalized_dirs=()
+            for bin_dir in "${bin_dirs[@]}"; do
+                local norm_dir="${TEMP_DIR}/normalized_bins/$(basename $bin_dir)"
+                mkdir -p "$norm_dir"
+
+                # Normalize each bin file (keep only first field of contig IDs)
+                for bin_file in "${bin_dir}"/*.fa; do
+                    if [ -f "$bin_file" ]; then
+                        local norm_file="${norm_dir}/$(basename $bin_file)"
+                        python3 << 'PYTHON_NORMALIZE'
+import sys
+input_file = sys.argv[1]
+output_file = sys.argv[2]
+
+with open(input_file) as infile, open(output_file, 'w') as outfile:
+    for line in infile:
+        if line.startswith('>'):
+            # Keep only the first field of the header (contig ID)
+            contig_id = line[1:].split()[0]
+            outfile.write(f'>{contig_id}\n')
+        else:
+            outfile.write(line)
+PYTHON_NORMALIZE
+                        python3 -c "$(cat << 'PYTHON_NORMALIZE'
+import sys
+input_file = sys.argv[1]
+output_file = sys.argv[2]
+
+with open(input_file) as infile, open(output_file, 'w') as outfile:
+    for line in infile:
+        if line.startswith('>'):
+            # Keep only the first field of the header (contig ID)
+            contig_id = line[1:].split()[0]
+            outfile.write(f'>{contig_id}\n')
+        else:
+            outfile.write(line)
+PYTHON_NORMALIZE
+)" "$bin_file" "$norm_file"
+                    fi
+                done
+
+                normalized_dirs+=("$norm_dir")
+            done
+
+            # Use normalized directories instead
+            log "  Created normalized bins in: ${TEMP_DIR}/normalized_bins/"
+            bin_dirs=("${normalized_dirs[@]}")
+
+            # Rebuild bin_dirs_args with normalized directories
+            bin_dirs_args=""
+            for norm_dir in "${normalized_dirs[@]}"; do
+                local bin_count=$(ls -1 "${norm_dir}"/*.fa 2>/dev/null | wc -l)
+                if [ $bin_count -gt 0 ]; then
+                    log "    Normalized: $(basename $norm_dir) ($bin_count bins)"
+                    bin_dirs_args="$bin_dirs_args --bin_dirs $norm_dir"
+                fi
+            done
+        fi
+    fi
+
     # Build Binette command
     local binette_cmd="binette \
         $bin_dirs_args \
