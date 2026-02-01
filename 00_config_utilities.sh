@@ -889,11 +889,25 @@ activate_env() {
         log "ERROR: conda.sh not found at $CONDA_BASE"
         exit 1
     fi
+    # Temporarily disable nounset (set -u) as conda activation scripts have unbound variables
+    local nounset_was_set=false
+    if [[ $- == *u* ]]; then
+        nounset_was_set=true
+        set +u
+    fi
     source "${CONDA_BASE}/etc/profile.d/conda.sh"
     conda activate "$env_name" || {
+        # Restore nounset before exiting
+        if [ "$nounset_was_set" = true ]; then
+            set -u
+        fi
         log "ERROR: Failed to activate $env_name"
         exit 1
     }
+    # Restore nounset if it was previously set
+    if [ "$nounset_was_set" = true ]; then
+        set -u
+    fi
     log "Activated conda env: $env_name"
 }
 
