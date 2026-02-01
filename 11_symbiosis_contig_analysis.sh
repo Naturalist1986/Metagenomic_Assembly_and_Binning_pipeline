@@ -876,13 +876,14 @@ EOF
     echo "" >> "$report_file"
     echo "Generated files:" >> "$report_file"
 
-    for f in "${output_dir}"/*.{tsv,fasta,faa,txt} 2>/dev/null; do
+    # Use find to list output files (avoids brace expansion issues)
+    while IFS= read -r -d '' f; do
         if [ -f "$f" ]; then
             local size=$(du -h "$f" | cut -f1)
             local lines=$(wc -l < "$f" 2>/dev/null || echo "N/A")
             echo "  $(basename "$f"): $size, $lines lines" >> "$report_file"
         fi
-    done
+    done < <(find "$output_dir" -maxdepth 2 -type f \( -name "*.tsv" -o -name "*.fasta" -o -name "*.faa" -o -name "*.txt" \) -print0 2>/dev/null)
 
     # Add summary statistics if available
     if [ -f "${output_dir}/correlation_summary.tsv" ]; then
