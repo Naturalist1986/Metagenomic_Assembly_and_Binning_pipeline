@@ -23,11 +23,21 @@
 set -euo pipefail
 
 # Source configuration and utilities
+# Handle SLURM execution where script is copied to temp directory
 if [ -n "${PIPELINE_SCRIPT_DIR:-}" ]; then
     source "${PIPELINE_SCRIPT_DIR}/00_config_utilities.sh"
+elif [ -n "${SLURM_SUBMIT_DIR:-}" ]; then
+    # When submitted via sbatch, use the submit directory
+    source "${SLURM_SUBMIT_DIR}/00_config_utilities.sh"
 else
+    # Fallback: try to determine script location
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    source "${SCRIPT_DIR}/00_config_utilities.sh"
+    if [ -f "${SCRIPT_DIR}/00_config_utilities.sh" ]; then
+        source "${SCRIPT_DIR}/00_config_utilities.sh"
+    else
+        # Last resort: use hardcoded path
+        source "/sci/backup/ofinkel/moshea/scripts/Metagenomic_Assembly_and_Binning_pipeline/00_config_utilities.sh"
+    fi
 fi
 
 # InterProScan path
