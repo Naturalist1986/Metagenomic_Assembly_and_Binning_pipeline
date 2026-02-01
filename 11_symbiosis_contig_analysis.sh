@@ -132,18 +132,23 @@ run_interproscan() {
         return 1
     fi
 
+    # Create dedicated InterProScan log/temp directory
+    local ipr_log_dir="${LOG_DIR}/${treatment}/interproscan"
+    mkdir -p "$ipr_log_dir"
+
     # Clean proteins file (remove asterisks from stop codons)
-    local clean_proteins="${TEMP_DIR}/proteins_cleaned.faa"
+    local clean_proteins="${ipr_log_dir}/proteins_cleaned.faa"
     log "  Cleaning protein sequences (removing stop codon asterisks)..."
     sed 's/\*//g' "$proteins_file" > "$clean_proteins"
 
-    # Create temp directory for InterProScan
-    local ipr_tmp="${TEMP_DIR}/ipr_tmp"
+    # Create temp directory for InterProScan inside log directory
+    local ipr_tmp="${ipr_log_dir}/tmp"
     mkdir -p "$ipr_tmp"
 
     log "  Running InterProScan (this may take several hours)..."
     log "  Input: $clean_proteins"
     log "  Output base: $ipr_output_base"
+    log "  Logs/temp directory: $ipr_log_dir"
 
     "$INTERPROSCAN_PATH" \
         -i "$clean_proteins" \
@@ -153,11 +158,11 @@ run_interproscan() {
         -dp \
         --goterms \
         --pa \
-        2>&1 | tee "${LOG_DIR}/${treatment}_interproscan.log"
+        2>&1 | tee "${ipr_log_dir}/interproscan.log"
 
     local exit_code=${PIPESTATUS[0]}
 
-    # Clean up temp files
+    # Clean up temp files but keep log
     rm -rf "$ipr_tmp" "$clean_proteins"
 
     if [ $exit_code -eq 0 ] && [ -f "$ipr_tsv" ]; then
