@@ -63,15 +63,16 @@ export CONDA_BASE="${CONDA_BASE:-/sci/home/moshea/miniconda3}"
 export SLURM_ACCOUNT="${SLURM_ACCOUNT:-}"
 
 # File-based sample storage - ONLY initialize if not already set
-if [ -z "$SAMPLE_INFO_FILE" ]; then
+# Use ${VAR:-} syntax to handle unbound variables when set -u is enabled
+if [ -z "${SAMPLE_INFO_FILE:-}" ]; then
     SAMPLE_INFO_FILE=""
 fi
 
-if [ -z "$TREATMENTS_FILE" ]; then
+if [ -z "${TREATMENTS_FILE:-}" ]; then
     TREATMENTS_FILE=""
 fi
 
-if [ -z "$TOTAL_SAMPLES" ]; then
+if [ -z "${TOTAL_SAMPLES:-}" ]; then
     TOTAL_SAMPLES=0
 fi
 
@@ -888,12 +889,41 @@ activate_env() {
         log "ERROR: conda.sh not found at $CONDA_BASE"
         exit 1
     fi
+    # Temporarily disable nounset (set -u) as conda activation scripts have unbound variables
+    local nounset_was_set=false
+    if [[ $- == *u* ]]; then
+        nounset_was_set=true
+        set +u
+    fi
     source "${CONDA_BASE}/etc/profile.d/conda.sh"
     conda activate "$env_name" || {
+        # Restore nounset before exiting
+        if [ "$nounset_was_set" = true ]; then
+            set -u
+        fi
         log "ERROR: Failed to activate $env_name"
         exit 1
     }
+    # Restore nounset if it was previously set
+    if [ "$nounset_was_set" = true ]; then
+        set -u
+    fi
     log "Activated conda env: $env_name"
+}
+
+# Deactivate conda environment (handles set -u compatibility)
+deactivate_env() {
+    # Temporarily disable nounset (set -u) as conda deactivation scripts have unbound variables
+    local nounset_was_set=false
+    if [[ $- == *u* ]]; then
+        nounset_was_set=true
+        set +u
+    fi
+    conda deactivate 2>/dev/null || true
+    # Restore nounset if it was previously set
+    if [ "$nounset_was_set" = true ]; then
+        set -u
+    fi
 }
 
 # Create directories for a sample
