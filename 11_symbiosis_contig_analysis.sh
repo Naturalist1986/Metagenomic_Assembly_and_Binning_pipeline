@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=symbiosis_analysis
-#SBATCH --array=0-99%5
+#SBATCH --array=0-5
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
