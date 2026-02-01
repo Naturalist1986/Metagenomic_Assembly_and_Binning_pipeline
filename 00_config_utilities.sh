@@ -63,15 +63,16 @@ export CONDA_BASE="${CONDA_BASE:-/sci/home/moshea/miniconda3}"
 export SLURM_ACCOUNT="${SLURM_ACCOUNT:-}"
 
 # File-based sample storage - ONLY initialize if not already set
-if [ -z "$SAMPLE_INFO_FILE" ]; then
+# Use ${VAR:-} syntax to handle unbound variables when set -u is enabled
+if [ -z "${SAMPLE_INFO_FILE:-}" ]; then
     SAMPLE_INFO_FILE=""
 fi
 
-if [ -z "$TREATMENTS_FILE" ]; then
+if [ -z "${TREATMENTS_FILE:-}" ]; then
     TREATMENTS_FILE=""
 fi
 
-if [ -z "$TOTAL_SAMPLES" ]; then
+if [ -z "${TOTAL_SAMPLES:-}" ]; then
     TOTAL_SAMPLES=0
 fi
 
