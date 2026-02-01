@@ -76,7 +76,7 @@ run_prodigal() {
 
     if ! command -v prodigal &> /dev/null; then
         log "ERROR: Prodigal not found in environment"
-        conda deactivate
+        deactivate_env
         return 1
     fi
 
@@ -93,7 +93,7 @@ run_prodigal() {
         2>&1 | tee "${LOG_DIR}/${treatment}_prodigal.log"
 
     local exit_code=${PIPESTATUS[0]}
-    conda deactivate
+    deactivate_env
 
     if [ $exit_code -eq 0 ] && [ -f "$proteins_file" ] && [ -s "$proteins_file" ]; then
         local protein_count=$(grep -c "^>" "$proteins_file" || echo 0)
@@ -212,7 +212,7 @@ run_coverm_contig() {
 
     if ! command -v coverm &> /dev/null; then
         log "ERROR: CoverM not found in environment"
-        conda deactivate
+        deactivate_env
         return 1
     fi
 
@@ -227,7 +227,7 @@ run_coverm_contig() {
         2>&1 | tee "${LOG_DIR}/${treatment}_coverm_contig.log"
 
     local exit_code=${PIPESTATUS[0]}
-    conda deactivate
+    deactivate_env
 
     if [ $exit_code -eq 0 ] && [ -f "$coverage_file" ]; then
         local contig_count=$(tail -n +2 "$coverage_file" | wc -l)

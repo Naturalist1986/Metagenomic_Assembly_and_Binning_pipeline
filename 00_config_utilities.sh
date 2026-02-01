@@ -911,6 +911,21 @@ activate_env() {
     log "Activated conda env: $env_name"
 }
 
+# Deactivate conda environment (handles set -u compatibility)
+deactivate_env() {
+    # Temporarily disable nounset (set -u) as conda deactivation scripts have unbound variables
+    local nounset_was_set=false
+    if [[ $- == *u* ]]; then
+        nounset_was_set=true
+        set +u
+    fi
+    conda deactivate 2>/dev/null || true
+    # Restore nounset if it was previously set
+    if [ "$nounset_was_set" = true ]; then
+        set -u
+    fi
+}
+
 # Create directories for a sample
 create_sample_dirs() {
     local sample_name="$1"
