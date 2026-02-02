@@ -90,7 +90,7 @@ run_prodigal() {
         -f gff \
         -o "$gff_file" \
         -p meta \
-        2>&1 | tee "${LOG_DIR}/${treatment}_prodigal.log"
+        2>&1 | tee "${LOG_DIR}/${treatment}_prodigal.log" >&2
 
     local exit_code=${PIPESTATUS[0]}
     deactivate_env
@@ -158,7 +158,7 @@ run_interproscan() {
         -dp \
         --goterms \
         --pa \
-        2>&1 | tee "${ipr_log_dir}/interproscan.log"
+        2>&1 | tee "${ipr_log_dir}/interproscan.log" >&2
 
     local exit_code=${PIPESTATUS[0]}
 
@@ -224,7 +224,7 @@ run_coverm_contig() {
         --min-read-aligned-percent 0.75 \
         --min-read-percent-identity 0.95 \
         --threads ${SLURM_CPUS_PER_TASK:-32} \
-        2>&1 | tee "${LOG_DIR}/${treatment}_coverm_contig.log"
+        2>&1 | tee "${LOG_DIR}/${treatment}_coverm_contig.log" >&2
 
     local exit_code=${PIPESTATUS[0]}
     deactivate_env
@@ -399,7 +399,7 @@ PYTHON_EOF
 
     # Run the filter script
     python3 "$filter_script" "$interproscan_tsv" "$symbiosis_contigs_list" "$symbiosis_annotations" \
-        2>&1 | tee "${LOG_DIR}/${treatment}_filter_symbiosis.log"
+        2>&1 | tee "${LOG_DIR}/${treatment}_filter_symbiosis.log" >&2
 
     local exit_code=${PIPESTATUS[0]}
 
@@ -823,7 +823,7 @@ PYTHON_EOF
         "$bins_dir" \
         "$output_dir" \
         "$treatment" \
-        2>&1 | tee "${LOG_DIR}/${treatment}_correlation_analysis.log"
+        2>&1 | tee "${LOG_DIR}/${treatment}_correlation_analysis.log" >&2
 
     local exit_code=${PIPESTATUS[0]}
 
