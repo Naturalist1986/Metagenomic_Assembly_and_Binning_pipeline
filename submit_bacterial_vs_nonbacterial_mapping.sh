@@ -72,7 +72,7 @@ if command -v sbatch &> /dev/null; then
     cat > "$SUBMIT_SCRIPT" << EOF
 #!/bin/bash
 #SBATCH --job-name=bact_map
-#SBATCH --array=0-${MAX_ARRAY_INDEX}%5
+#SBATCH --array=0-${MAX_ARRAY_INDEX}
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
