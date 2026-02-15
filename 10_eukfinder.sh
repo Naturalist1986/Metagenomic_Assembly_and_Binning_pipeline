@@ -97,26 +97,26 @@ run_eukfinder() {
     # Check if EukFinder is available
     if ! command -v eukfinder &> /dev/null; then
         log "ERROR: eukfinder command not available in conda environment"
-        conda deactivate
+        deactivate_env
         return 1
     fi
 
     # Verify database paths are configured
     if [ -z "$EUKFINDER_CENTRIFUGE_DB" ] || [ "$EUKFINDER_CENTRIFUGE_DB" == "/path/to/centrifuge/database" ]; then
         log "ERROR: EUKFINDER_CENTRIFUGE_DB not configured in 00_config_utilities.sh"
-        conda deactivate
+        deactivate_env
         return 1
     fi
 
     if [ -z "$EUKFINDER_PLAST_DB" ] || [ "$EUKFINDER_PLAST_DB" == "/path/to/plast/database" ]; then
         log "ERROR: EUKFINDER_PLAST_DB not configured in 00_config_utilities.sh"
-        conda deactivate
+        deactivate_env
         return 1
     fi
 
     if [ -z "$EUKFINDER_PLAST_ID_MAP" ] || [ "$EUKFINDER_PLAST_ID_MAP" == "/path/to/plast/id_map" ]; then
         log "ERROR: EUKFINDER_PLAST_ID_MAP not configured in 00_config_utilities.sh"
-        conda deactivate
+        deactivate_env
         return 1
     fi
 
@@ -127,7 +127,7 @@ run_eukfinder() {
     # Change to working directory (EukFinder creates outputs in current directory)
     cd "$work_dir" || {
         log "ERROR: Could not change to working directory: $work_dir"
-        conda deactivate
+        deactivate_env
         return 1
     }
 
@@ -169,7 +169,7 @@ run_eukfinder() {
 
     local exit_code=${PIPESTATUS[0]}
 
-    conda deactivate
+    deactivate_env
 
     if [ $exit_code -eq 0 ]; then
         # Verify that results were actually created

@@ -73,7 +73,7 @@ EXIT_CODE=$?
 cd ..
 rm -rf "$TEST_DIR"
 
-conda deactivate
+deactivate_env
 
 if [ $EXIT_CODE -eq 0 ] || grep -q "generating entries" taxonomy_update.log; then
     echo ""
