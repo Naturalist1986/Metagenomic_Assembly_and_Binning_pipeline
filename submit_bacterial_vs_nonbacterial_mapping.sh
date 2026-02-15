@@ -6,48 +6,53 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/00_config_utilities.sh"
 
 echo "====================================================================="
-echo "Bacterial vs Non-Bacterial Mapping Workflow"
+echo "Bacterial vs Non-Bacterial Mapping Workflow (Per-Binner)"
 echo "====================================================================="
 echo ""
-
-# Step 1: Collect bacterial sequences
-echo "Step 1: Collecting bacterial sequences from EukFinder results..."
-echo "-------------------------------------------------------------------"
-
-"${SCRIPT_DIR}/collect_bacterial_sequences.sh"
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to collect bacterial sequences"
-    exit 1
-fi
-
-# Step 2: Collect non-bacterial sequences
+echo "This workflow maps reads to sequences from EACH BINNER separately,"
+echo "then averages results to avoid duplicate contig counting."
 echo ""
-echo "Step 2: Collecting non-bacterial sequences from EukFinder results..."
+
+# Step 1: Check EukFinder results
+echo "Step 1: Checking EukFinder results..."
 echo "-------------------------------------------------------------------"
 
-"${SCRIPT_DIR}/collect_nonbacterial_sequences.sh"
+EUKFINDER_DIR="${OUTPUT_DIR}/eukfinder_output"
 
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to collect non-bacterial sequences"
+if [ ! -d "$EUKFINDER_DIR" ]; then
+    echo "ERROR: EukFinder directory not found: $EUKFINDER_DIR"
+    echo "Please run EukFinder first:"
+    echo "  ./submit_eukfinder_all_bins.sh"
     exit 1
 fi
 
-# Check how many treatments were processed
-BACTERIAL_DIR="${OUTPUT_DIR}/bacterial_sequences"
-NUM_TREATMENTS=$(ls -1 "${BACTERIAL_DIR}"/*_bacterial.fasta 2>/dev/null | wc -l)
+# Count treatments
+NUM_TREATMENTS=$(ls -1d "${EUKFINDER_DIR}"/*/ 2>/dev/null | wc -l)
 
 if [ "$NUM_TREATMENTS" -eq 0 ]; then
-    echo "ERROR: No sequence files found"
+    echo "ERROR: No treatments found in EukFinder results"
+    echo "Please run EukFinder first:"
+    echo "  ./submit_eukfinder_all_bins.sh"
     exit 1
 fi
 
-echo ""
-echo "Found $NUM_TREATMENTS treatments with sequences"
+echo "Found $NUM_TREATMENTS treatments in EukFinder results"
 echo ""
 
-# Step 3: Submit mapping jobs
-echo "Step 3: Submitting SLURM array job for read mapping..."
+# Show which binners are available
+echo "Checking available binners..."
+for treatment_dir in "${EUKFINDER_DIR}"/*; do
+    if [ ! -d "$treatment_dir" ]; then
+        continue
+    fi
+    treatment=$(basename "$treatment_dir")
+    binners=$(ls -1 "$treatment_dir" | grep -oE '_[^_]+_' | tr -d '_' | sort -u | tr '\n' ' ')
+    echo "  $treatment: $binners"
+done
+echo ""
+
+# Step 2: Submit mapping jobs
+echo "Step 2: Submitting SLURM array job for per-binner mapping..."
 echo "-------------------------------------------------------------------"
 
 MAX_ARRAY_INDEX=$((NUM_TREATMENTS - 1))
