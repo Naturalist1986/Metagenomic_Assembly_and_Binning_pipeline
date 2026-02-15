@@ -13,7 +13,7 @@ echo "Creating Consolidated EukFinder Results Table"
 echo "====================================================================="
 echo ""
 
-EUKFINDER_DIR="${OUTPUT_DIR}/eukfinder"
+EUKFINDER_DIR="${OUTPUT_DIR}/eukfinder_output"
 
 if [ ! -d "$EUKFINDER_DIR" ]; then
     echo "ERROR: EukFinder results directory not found: $EUKFINDER_DIR"

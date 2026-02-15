@@ -10,7 +10,7 @@ echo "Collecting Non-Prokaryotic Sequences from EukFinder Results"
 echo "====================================================================="
 echo ""
 
-EUKFINDER_DIR="${OUTPUT_DIR}/eukfinder"
+EUKFINDER_DIR="${OUTPUT_DIR}/eukfinder_output"
 NONPROK_DIR="${OUTPUT_DIR}/nonprokaryotic_sequences"
 
 if [ ! -d "$EUKFINDER_DIR" ]; then

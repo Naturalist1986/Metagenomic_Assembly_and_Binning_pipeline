@@ -90,8 +90,8 @@ if command -v sbatch &> /dev/null; then
 #SBATCH --cpus-per-task=48
 #SBATCH --mem=128G
 #SBATCH --time=24:00:00
-#SBATCH --output=${LOG_DIR}/eukfinder/eukfinder_%A_%a.out
-#SBATCH --error=${LOG_DIR}/eukfinder/eukfinder_%A_%a.err
+#SBATCH --output=${LOG_DIR}/eukfinder_output/eukfinder_%A_%a.out
+#SBATCH --error=${LOG_DIR}/eukfinder_output/eukfinder_%A_%a.err
 
 # Set environment variable for script location
 export PIPELINE_SCRIPT_DIR="${SCRIPT_DIR}"
@@ -101,7 +101,7 @@ bash "${SCRIPT_DIR}/10_eukfinder.sh"
 EOF
 
     # Make log directory
-    mkdir -p "${LOG_DIR}/eukfinder"
+    mkdir -p "${LOG_DIR}/eukfinder_output"
 
     # Submit the job
     JOB_ID=$(sbatch --parsable "$SUBMIT_SCRIPT")
@@ -117,11 +117,11 @@ EOF
         echo "  squeue -j $JOB_ID"
         echo ""
         echo "View logs at:"
-        echo "  ${LOG_DIR}/eukfinder/eukfinder_${JOB_ID}_*.out"
-        echo "  ${LOG_DIR}/eukfinder/eukfinder_${JOB_ID}_*.err"
+        echo "  ${LOG_DIR}/eukfinder_output/eukfinder_${JOB_ID}_*.out"
+        echo "  ${LOG_DIR}/eukfinder_output/eukfinder_${JOB_ID}_*.err"
         echo ""
         echo "Results will be saved to:"
-        echo "  ${OUTPUT_DIR}/eukfinder/"
+        echo "  ${OUTPUT_DIR}/eukfinder_output/"
         echo ""
     else
         echo "ERROR: Failed to submit job"

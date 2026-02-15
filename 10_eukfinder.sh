@@ -64,11 +64,11 @@ init_conda
 OUTPUT_PREFIX="${SAMPLE}_${BINNER}_$(basename "$BIN_NAME" .fa)"
 
 # Setup output directories - one directory per bin
-EUKFINDER_OUTPUT_DIR="${OUTPUT_DIR}/eukfinder/${TREATMENT}/${OUTPUT_PREFIX}"
+EUKFINDER_OUTPUT_DIR="${OUTPUT_DIR}/eukfinder_output/${TREATMENT}/${OUTPUT_PREFIX}"
 mkdir -p "$EUKFINDER_OUTPUT_DIR"
 
 # Create log directory
-mkdir -p "${LOG_DIR}/eukfinder/${TREATMENT}"
+mkdir -p "${LOG_DIR}/eukfinder_output/${TREATMENT}"
 
 # Setup temporary directory for this bin
 TEMP_DIR=$(mktemp -d -p "${WORK_DIR}" eukfinder_${SAMPLE}_${BINNER}_XXXXXX)
@@ -165,7 +165,7 @@ run_eukfinder() {
         -e "$evalue" \
         --pid "$pid" \
         --cov "$cov" \
-        2>&1 | tee "${LOG_DIR}/eukfinder/${TREATMENT}/${output_prefix}_eukfinder.log"
+        2>&1 | tee "${LOG_DIR}/eukfinder_output/${TREATMENT}/${output_prefix}_eukfinder.log"
 
     local exit_code=${PIPESTATUS[0]}
 
@@ -179,7 +179,7 @@ run_eukfinder() {
         else
             log "ERROR: EukFinder exited with code 0 but produced no results"
             log "This usually indicates a database configuration issue"
-            log "Check the log file at: ${LOG_DIR}/eukfinder/${TREATMENT}/${output_prefix}_eukfinder.log"
+            log "Check the log file at: ${LOG_DIR}/eukfinder_output/${TREATMENT}/${output_prefix}_eukfinder.log"
             return 1
         fi
     else
