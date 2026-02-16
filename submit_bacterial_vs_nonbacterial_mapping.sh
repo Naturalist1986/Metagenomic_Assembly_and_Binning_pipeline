@@ -75,8 +75,8 @@ if command -v sbatch &> /dev/null; then
 #SBATCH --array=0-${MAX_ARRAY_INDEX}
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=128G
 #SBATCH --time=12:00:00
 #SBATCH --account=ofinkel
 #SBATCH --output=${LOG_DIR}/bacterial_vs_nonbacterial_mapping/map_%A_%a.out
