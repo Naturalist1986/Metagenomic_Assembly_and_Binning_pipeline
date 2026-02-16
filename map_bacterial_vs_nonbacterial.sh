@@ -74,9 +74,10 @@ TREATMENT_DIR="${MAPPING_DIR}/${TREATMENT}"
 mkdir -p "$TREATMENT_DIR"
 
 # Clean up any stale BBMap reference indexes from previous runs
+# Ignore errors (stale file handles on NFS are common and non-fatal)
 if [ -d "${SCRIPT_DIR}/ref" ]; then
-    log "Cleaning up stale BBMap reference directory"
-    rm -rf "${SCRIPT_DIR}/ref"
+    log "Cleaning up stale BBMap reference directory (ignoring NFS errors)"
+    rm -rf "${SCRIPT_DIR}/ref" 2>/dev/null || true
 fi
 
 # Check if already completed
