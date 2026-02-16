@@ -107,6 +107,33 @@ fi
 
 log "Found ${#BINNERS[@]} binners: ${BINNERS[*]}"
 
+# Filter out refinement tools (keep only primary binners)
+# Refinement tools should not be averaged with primary binners
+REFINEMENT_TOOLS=("binette" "dastool" "binspreader" "selected")
+FILTERED_BINNERS=()
+for binner in "${BINNERS[@]}"; do
+    is_refinement=false
+    for refinement in "${REFINEMENT_TOOLS[@]}"; do
+        if [[ "$binner" == "$refinement" ]]; then
+            is_refinement=true
+            log "  Excluding refinement tool: $binner"
+            break
+        fi
+    done
+    if [ "$is_refinement" = false ]; then
+        FILTERED_BINNERS+=("$binner")
+    fi
+done
+
+BINNERS=("${FILTERED_BINNERS[@]}")
+
+if [ ${#BINNERS[@]} -eq 0 ]; then
+    log "ERROR: No primary binners found after filtering out refinement tools"
+    exit 1
+fi
+
+log "After filtering refinement tools, ${#BINNERS[@]} primary binners remain: ${BINNERS[*]}"
+
 # Find reads for this treatment
 log "Locating input reads..."
 
