@@ -187,6 +187,38 @@ total_reads=0
 for BINNER in "${BINNERS[@]}"; do
     log "Processing binner: $BINNER"
 
+    # Check if this binner already has completed results (skip if done)
+    BINNER_BACT_STATS="${TREATMENT_DIR}/${BINNER}_bacterial_stats.txt"
+    BINNER_NONBACT_STATS="${TREATMENT_DIR}/${BINNER}_nonbacterial_stats.txt"
+
+    if [ -f "$BINNER_BACT_STATS" ] && [ -f "$BINNER_NONBACT_STATS" ]; then
+        log "  Binner $BINNER already mapped - skipping to save time"
+
+        # Extract existing results from stats files
+        bact_mapped=$(grep "mapped:" "$BINNER_BACT_STATS" | head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
+        bact_mapped=${bact_mapped:-0}
+
+        nonbact_mapped=$(grep "mapped:" "$BINNER_NONBACT_STATS" | head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
+        nonbact_mapped=${nonbact_mapped:-0}
+
+        # Get total reads if not set yet
+        if [ $total_reads -eq 0 ]; then
+            total_reads=$(grep "reads:" "$BINNER_BACT_STATS" | head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
+            total_reads=${total_reads:-0}
+        fi
+
+        # Calculate unmapped
+        unmapped=$((total_reads - bact_mapped - nonbact_mapped))
+
+        # Store results
+        binner_bacterial_reads[$BINNER]=$bact_mapped
+        binner_nonbacterial_reads[$BINNER]=$nonbact_mapped
+        binner_unmapped_reads[$BINNER]=$unmapped
+
+        log "  Loaded existing results: Bacterial=$bact_mapped, Non-bacterial=$nonbact_mapped, Unmapped=$unmapped"
+        continue
+    fi
+
     # Collect sequences for this binner only
     BINNER_BACTERIAL_FA="${TREATMENT_DIR}/${BINNER}_bacterial.fasta"
     BINNER_NONBACTERIAL_FA="${TREATMENT_DIR}/${BINNER}_nonbacterial.fasta"
