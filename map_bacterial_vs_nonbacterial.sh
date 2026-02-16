@@ -125,7 +125,7 @@ log "  R1: $R1_PATH"
 log "  R2: $R2_PATH"
 
 # Activate BBMap environment
-activate_env bbtools
+activate_env bbmap
 
 # Map to each binner separately
 log "Mapping reads to each binner's sequences..."
