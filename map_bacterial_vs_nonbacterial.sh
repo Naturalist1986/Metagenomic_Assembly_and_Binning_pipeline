@@ -73,6 +73,12 @@ log "Processing treatment: $TREATMENT"
 TREATMENT_DIR="${MAPPING_DIR}/${TREATMENT}"
 mkdir -p "$TREATMENT_DIR"
 
+# Clean up any stale BBMap reference indexes from previous runs
+if [ -d "${SCRIPT_DIR}/ref" ]; then
+    log "Cleaning up stale BBMap reference directory"
+    rm -rf "${SCRIPT_DIR}/ref"
+fi
+
 # Check if already completed
 SUMMARY_FILE="${TREATMENT_DIR}/mapping_summary.txt"
 if [ -f "$SUMMARY_FILE" ]; then
@@ -230,6 +236,7 @@ for BINNER in "${BINNERS[@]}"; do
             covstats="${TREATMENT_DIR}/${BINNER}_bacterial_covstats.txt" \
             minid=0.95 \
             ambiguous=random \
+            nodisk=true \
             threads=${SLURM_CPUS_PER_TASK:-16} \
             -Xmx${JAVA_MEM}g \
             2>&1 | tee "${TREATMENT_DIR}/${BINNER}_bacterial_bbmap.log"
@@ -253,6 +260,7 @@ for BINNER in "${BINNERS[@]}"; do
             covstats="${TREATMENT_DIR}/${BINNER}_nonbacterial_covstats.txt" \
             minid=0.95 \
             ambiguous=random \
+            nodisk=true \
             threads=${SLURM_CPUS_PER_TASK:-16} \
             -Xmx${JAVA_MEM}g \
             2>&1 | tee "${TREATMENT_DIR}/${BINNER}_nonbacterial_bbmap.log"
