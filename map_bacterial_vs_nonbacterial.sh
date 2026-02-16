@@ -33,8 +33,9 @@ ARRAY_INDEX=${SLURM_ARRAY_TASK_ID:-0}
 log "Starting bacterial vs non-bacterial mapping (Array index: $ARRAY_INDEX)"
 
 # Define directories
-EUKFINDER_DIR="${OUTPUT_DIR}/eukfinder_output"
-MAPPING_DIR="${OUTPUT_DIR}/bacterial_vs_nonbacterial_mapping"
+# Allow EUKFINDER_DIR to be overridden, otherwise use OUTPUT_DIR/eukfinder_output
+EUKFINDER_DIR="${EUKFINDER_DIR:-${OUTPUT_DIR}/eukfinder_output}"
+MAPPING_DIR="${MAPPING_DIR:-${OUTPUT_DIR}/bacterial_vs_nonbacterial_mapping}"
 
 # Get list of treatments from EukFinder output
 TREATMENTS=($(ls -1 "$EUKFINDER_DIR" 2>/dev/null | sort))
@@ -159,16 +160,20 @@ for BINNER in "${BINNERS[@]}"; do
         bin_name=$(basename "$bin_dir")
 
         # Collect bacterial sequences (Bact only)
-        if [ -f "${results_dir}/Bact.fasta" ] && [ -s "${results_dir}/Bact.fasta" ]; then
+        # Look for files matching *.Bact.fasta or Bact.fasta
+        bact_file=$(find "$results_dir" -maxdepth 1 \( -name "*.Bact.fasta" -o -name "Bact.fasta" \) -type f 2>/dev/null | head -1)
+        if [ -n "$bact_file" ] && [ -s "$bact_file" ]; then
             awk -v bin="$bin_name" '/^>/ {print $0"|bin:"bin; next} {print}' \
-                "${results_dir}/Bact.fasta" >> "$BINNER_BACTERIAL_FA"
+                "$bact_file" >> "$BINNER_BACTERIAL_FA"
         fi
 
         # Collect non-bacterial sequences (Arch + Euk + Unk + EUnk + Misc)
         for category in Arch Euk Unk EUnk Misc; do
-            if [ -f "${results_dir}/${category}.fasta" ] && [ -s "${results_dir}/${category}.fasta" ]; then
+            # Look for files matching *.{category}.fasta or {category}.fasta
+            cat_file=$(find "$results_dir" -maxdepth 1 \( -name "*.${category}.fasta" -o -name "${category}.fasta" \) -type f 2>/dev/null | head -1)
+            if [ -n "$cat_file" ] && [ -s "$cat_file" ]; then
                 awk -v bin="$bin_name" -v cat="$category" '/^>/ {print $0"|bin:"bin"|cat:"cat; next} {print}' \
-                    "${results_dir}/${category}.fasta" >> "$BINNER_NONBACTERIAL_FA"
+                    "$cat_file" >> "$BINNER_NONBACTERIAL_FA"
             fi
         done
     done
