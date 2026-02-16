@@ -73,6 +73,11 @@ log "Processing treatment: $TREATMENT"
 TREATMENT_DIR="${MAPPING_DIR}/${TREATMENT}"
 mkdir -p "$TREATMENT_DIR"
 
+# Redirect all output to a log file (works regardless of how script is invoked)
+mkdir -p "${LOG_DIR}/bacterial_vs_nonbacterial_mapping" 2>/dev/null || true
+SCRIPT_LOG="${LOG_DIR}/bacterial_vs_nonbacterial_mapping/map_${TREATMENT}_${SLURM_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}.log"
+exec > >(tee -a "$SCRIPT_LOG") 2>&1
+
 # Clean up any stale BBMap reference indexes from previous runs
 # Ignore errors (stale file handles on NFS are common and non-fatal)
 if [ -d "${SCRIPT_DIR}/ref" ]; then
@@ -134,6 +139,26 @@ fi
 
 log "After filtering refinement tools, ${#BINNERS[@]} primary binners remain: ${BINNERS[*]}"
 
+# Report which binners have completed checkpoints vs still need processing
+COMPLETED_BINNERS=()
+PENDING_BINNERS=()
+for binner in "${BINNERS[@]}"; do
+    if [ -f "${TREATMENT_DIR}/${binner}_bacterial_stats.txt" ] && \
+       [ -f "${TREATMENT_DIR}/${binner}_nonbacterial_stats.txt" ]; then
+        COMPLETED_BINNERS+=("$binner")
+    else
+        PENDING_BINNERS+=("$binner")
+    fi
+done
+if [ ${#COMPLETED_BINNERS[@]} -gt 0 ]; then
+    log "Previously completed binners (will skip): ${COMPLETED_BINNERS[*]}"
+fi
+if [ ${#PENDING_BINNERS[@]} -gt 0 ]; then
+    log "Binners to process: ${PENDING_BINNERS[*]}"
+else
+    log "All binners already completed - generating summary only"
+fi
+
 # Find reads for this treatment
 log "Locating input reads..."
 
@@ -182,7 +207,48 @@ log "Mapping reads to each binner's sequences..."
 declare -A binner_bacterial_reads
 declare -A binner_nonbacterial_reads
 declare -A binner_unmapped_reads
+declare -a FAILED_BINNERS=()
 total_reads=0
+
+# Helper function to load results from stats files for a given binner
+load_binner_results() {
+    local binner="$1"
+    local bact_stats="${TREATMENT_DIR}/${binner}_bacterial_stats.txt"
+    local nonbact_stats="${TREATMENT_DIR}/${binner}_nonbacterial_stats.txt"
+
+    local bact_mapped=0
+    local nonbact_mapped=0
+
+    if [ -f "$bact_stats" ]; then
+        bact_mapped=$(grep "mapped:" "$bact_stats" | head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
+        bact_mapped=${bact_mapped:-0}
+    fi
+
+    if [ -f "$nonbact_stats" ]; then
+        nonbact_mapped=$(grep "mapped:" "$nonbact_stats" | head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
+        nonbact_mapped=${nonbact_mapped:-0}
+    fi
+
+    # Get total reads if not set yet
+    if [ $total_reads -eq 0 ]; then
+        if [ -f "$bact_stats" ]; then
+            total_reads=$(grep "reads:" "$bact_stats" | head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
+        elif [ -f "$nonbact_stats" ]; then
+            total_reads=$(grep "reads:" "$nonbact_stats" | head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
+        fi
+        total_reads=${total_reads:-0}
+    fi
+
+    # Calculate unmapped
+    local unmapped=$((total_reads - bact_mapped - nonbact_mapped))
+
+    # Store results in parent arrays
+    binner_bacterial_reads[$binner]=$bact_mapped
+    binner_nonbacterial_reads[$binner]=$nonbact_mapped
+    binner_unmapped_reads[$binner]=$unmapped
+
+    log "  Results for $binner: Bacterial=$bact_mapped, Non-bacterial=$nonbact_mapped, Unmapped=$unmapped"
+}
 
 for BINNER in "${BINNERS[@]}"; do
     log "Processing binner: $BINNER"
@@ -193,170 +259,140 @@ for BINNER in "${BINNERS[@]}"; do
 
     if [ -f "$BINNER_BACT_STATS" ] && [ -f "$BINNER_NONBACT_STATS" ]; then
         log "  Binner $BINNER already mapped - skipping to save time"
-
-        # Extract existing results from stats files
-        bact_mapped=$(grep "mapped:" "$BINNER_BACT_STATS" | head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
-        bact_mapped=${bact_mapped:-0}
-
-        nonbact_mapped=$(grep "mapped:" "$BINNER_NONBACT_STATS" | head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
-        nonbact_mapped=${nonbact_mapped:-0}
-
-        # Get total reads if not set yet
-        if [ $total_reads -eq 0 ]; then
-            total_reads=$(grep "reads:" "$BINNER_BACT_STATS" | head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
-            total_reads=${total_reads:-0}
-        fi
-
-        # Calculate unmapped
-        unmapped=$((total_reads - bact_mapped - nonbact_mapped))
-
-        # Store results
-        binner_bacterial_reads[$BINNER]=$bact_mapped
-        binner_nonbacterial_reads[$BINNER]=$nonbact_mapped
-        binner_unmapped_reads[$BINNER]=$unmapped
-
-        log "  Loaded existing results: Bacterial=$bact_mapped, Non-bacterial=$nonbact_mapped, Unmapped=$unmapped"
+        load_binner_results "$BINNER"
         continue
     fi
 
-    # Collect sequences for this binner only
-    BINNER_BACTERIAL_FA="${TREATMENT_DIR}/${BINNER}_bacterial.fasta"
-    BINNER_NONBACTERIAL_FA="${TREATMENT_DIR}/${BINNER}_nonbacterial.fasta"
+    # Run mapping for this binner in a subshell so failures don't kill the entire script
+    set +e
+    (
+        set -euo pipefail
 
-    > "$BINNER_BACTERIAL_FA"
-    > "$BINNER_NONBACTERIAL_FA"
+        # Collect sequences for this binner only
+        BINNER_BACTERIAL_FA="${TREATMENT_DIR}/${BINNER}_bacterial.fasta"
+        BINNER_NONBACTERIAL_FA="${TREATMENT_DIR}/${BINNER}_nonbacterial.fasta"
 
-    # Extract sequences from bins belonging to this binner
-    for bin_dir in "${EUKFINDER_TREATMENT_DIR}"/*_${BINNER}_*/; do
-        if [ ! -d "$bin_dir" ]; then
-            continue
-        fi
+        > "$BINNER_BACTERIAL_FA"
+        > "$BINNER_NONBACTERIAL_FA"
 
-        results_dir="${bin_dir}/Eukfinder_results"
-        if [ ! -d "$results_dir" ]; then
-            continue
-        fi
-
-        bin_name=$(basename "$bin_dir")
-
-        # Collect bacterial sequences (Bact only)
-        # Look for files matching *.Bact.fasta or Bact.fasta
-        bact_file=$(find "$results_dir" -maxdepth 1 \( -name "*.Bact.fasta" -o -name "Bact.fasta" \) -type f 2>/dev/null | head -1)
-        if [ -n "$bact_file" ] && [ -s "$bact_file" ]; then
-            awk -v bin="$bin_name" '/^>/ {print $0"|bin:"bin; next} {print}' \
-                "$bact_file" >> "$BINNER_BACTERIAL_FA"
-        fi
-
-        # Collect non-bacterial sequences (Arch + Euk + Unk + EUnk + Misc)
-        for category in Arch Euk Unk EUnk Misc; do
-            # Look for files matching *.{category}.fasta or {category}.fasta
-            cat_file=$(find "$results_dir" -maxdepth 1 \( -name "*.${category}.fasta" -o -name "${category}.fasta" \) -type f 2>/dev/null | head -1)
-            if [ -n "$cat_file" ] && [ -s "$cat_file" ]; then
-                awk -v bin="$bin_name" -v cat="$category" '/^>/ {print $0"|bin:"bin"|cat:"cat; next} {print}' \
-                    "$cat_file" >> "$BINNER_NONBACTERIAL_FA"
+        # Extract sequences from bins belonging to this binner
+        for bin_dir in "${EUKFINDER_TREATMENT_DIR}"/*_${BINNER}_*/; do
+            if [ ! -d "$bin_dir" ]; then
+                continue
             fi
+
+            results_dir="${bin_dir}/Eukfinder_results"
+            if [ ! -d "$results_dir" ]; then
+                continue
+            fi
+
+            bin_name=$(basename "$bin_dir")
+
+            # Collect bacterial sequences (Bact only)
+            bact_file=$(find "$results_dir" -maxdepth 1 \( -name "*.Bact.fasta" -o -name "Bact.fasta" \) -type f 2>/dev/null | head -1)
+            if [ -n "$bact_file" ] && [ -s "$bact_file" ]; then
+                awk -v bin="$bin_name" '/^>/ {print $0"|bin:"bin; next} {print}' \
+                    "$bact_file" >> "$BINNER_BACTERIAL_FA"
+            fi
+
+            # Collect non-bacterial sequences (Arch + Euk + Unk + EUnk + Misc)
+            for category in Arch Euk Unk EUnk Misc; do
+                cat_file=$(find "$results_dir" -maxdepth 1 \( -name "*.${category}.fasta" -o -name "${category}.fasta" \) -type f 2>/dev/null | head -1)
+                if [ -n "$cat_file" ] && [ -s "$cat_file" ]; then
+                    awk -v bin="$bin_name" -v cat="$category" '/^>/ {print $0"|bin:"bin"|cat:"cat; next} {print}' \
+                        "$cat_file" >> "$BINNER_NONBACTERIAL_FA"
+                fi
+            done
         done
-    done
 
-    # Check if we have sequences for this binner
-    if [ -s "$BINNER_BACTERIAL_FA" ]; then
-        bact_seqs=$(grep -c "^>" "$BINNER_BACTERIAL_FA" 2>/dev/null | head -1 | tr -d '\n\r')
-    else
-        bact_seqs=0
-    fi
-    bact_seqs=${bact_seqs:-0}
+        # Check if we have sequences for this binner
+        if [ -s "$BINNER_BACTERIAL_FA" ]; then
+            bact_seqs=$(grep -c "^>" "$BINNER_BACTERIAL_FA" 2>/dev/null | head -1 | tr -d '\n\r')
+        else
+            bact_seqs=0
+        fi
+        bact_seqs=${bact_seqs:-0}
 
-    if [ -s "$BINNER_NONBACTERIAL_FA" ]; then
-        nonbact_seqs=$(grep -c "^>" "$BINNER_NONBACTERIAL_FA" 2>/dev/null | head -1 | tr -d '\n\r')
-    else
-        nonbact_seqs=0
-    fi
-    nonbact_seqs=${nonbact_seqs:-0}
+        if [ -s "$BINNER_NONBACTERIAL_FA" ]; then
+            nonbact_seqs=$(grep -c "^>" "$BINNER_NONBACTERIAL_FA" 2>/dev/null | head -1 | tr -d '\n\r')
+        else
+            nonbact_seqs=0
+        fi
+        nonbact_seqs=${nonbact_seqs:-0}
 
-    if [ "$bact_seqs" -eq 0 ] && [ "$nonbact_seqs" -eq 0 ]; then
-        log "  No sequences found for binner $BINNER - skipping"
-        rm -f "$BINNER_BACTERIAL_FA" "$BINNER_NONBACTERIAL_FA"
+        if [ "$bact_seqs" -eq 0 ] && [ "$nonbact_seqs" -eq 0 ]; then
+            log "  No sequences found for binner $BINNER - skipping"
+            rm -f "$BINNER_BACTERIAL_FA" "$BINNER_NONBACTERIAL_FA"
+            exit 0
+        fi
+
+        log "  Bacterial sequences: $bact_seqs"
+        log "  Non-bacterial sequences: $nonbact_seqs"
+
+        # Map to bacterial sequences
+        if [ "$bact_seqs" -gt 0 ]; then
+            log "  Mapping to bacterial sequences..."
+
+            bbmap.sh \
+                in1="$R1_PATH" \
+                in2="$R2_PATH" \
+                ref="$BINNER_BACTERIAL_FA" \
+                out="${TREATMENT_DIR}/${BINNER}_bacterial.bam" \
+                statsfile="${TREATMENT_DIR}/${BINNER}_bacterial_stats.txt" \
+                covstats="${TREATMENT_DIR}/${BINNER}_bacterial_covstats.txt" \
+                minid=0.95 \
+                ambiguous=random \
+                nodisk=true \
+                threads=${SLURM_CPUS_PER_TASK:-16} \
+                -Xmx${JAVA_MEM}g \
+                2>&1 | tee "${TREATMENT_DIR}/${BINNER}_bacterial_bbmap.log"
+        fi
+
+        # Map to non-bacterial sequences
+        if [ "$nonbact_seqs" -gt 0 ]; then
+            log "  Mapping to non-bacterial sequences..."
+
+            bbmap.sh \
+                in1="$R1_PATH" \
+                in2="$R2_PATH" \
+                ref="$BINNER_NONBACTERIAL_FA" \
+                out="${TREATMENT_DIR}/${BINNER}_nonbacterial.bam" \
+                statsfile="${TREATMENT_DIR}/${BINNER}_nonbacterial_stats.txt" \
+                covstats="${TREATMENT_DIR}/${BINNER}_nonbacterial_covstats.txt" \
+                minid=0.95 \
+                ambiguous=random \
+                nodisk=true \
+                threads=${SLURM_CPUS_PER_TASK:-16} \
+                -Xmx${JAVA_MEM}g \
+                2>&1 | tee "${TREATMENT_DIR}/${BINNER}_nonbacterial_bbmap.log"
+        fi
+    )
+    BINNER_EXIT_CODE=$?
+    set -e
+
+    if [ $BINNER_EXIT_CODE -ne 0 ]; then
+        log "ERROR: Binner $BINNER failed with exit code $BINNER_EXIT_CODE - continuing with remaining binners"
+        FAILED_BINNERS+=("$BINNER")
+        # Clean up partial stats files so this binner will be retried on next run
+        rm -f "${TREATMENT_DIR}/${BINNER}_bacterial_stats.txt" \
+              "${TREATMENT_DIR}/${BINNER}_nonbacterial_stats.txt" \
+              "${TREATMENT_DIR}/${BINNER}_bacterial.bam" \
+              "${TREATMENT_DIR}/${BINNER}_nonbacterial.bam" 2>/dev/null || true
         continue
     fi
 
-    log "  Bacterial sequences: $bact_seqs"
-    log "  Non-bacterial sequences: $nonbact_seqs"
-
-    # Map to bacterial sequences
-    bact_mapped=0
-    if [ "$bact_seqs" -gt 0 ]; then
-        log "  Mapping to bacterial sequences..."
-
-        bbmap.sh \
-            in1="$R1_PATH" \
-            in2="$R2_PATH" \
-            ref="$BINNER_BACTERIAL_FA" \
-            out="${TREATMENT_DIR}/${BINNER}_bacterial.bam" \
-            statsfile="${TREATMENT_DIR}/${BINNER}_bacterial_stats.txt" \
-            covstats="${TREATMENT_DIR}/${BINNER}_bacterial_covstats.txt" \
-            minid=0.95 \
-            ambiguous=random \
-            nodisk=true \
-            threads=${SLURM_CPUS_PER_TASK:-16} \
-            -Xmx${JAVA_MEM}g \
-            2>&1 | tee "${TREATMENT_DIR}/${BINNER}_bacterial_bbmap.log"
-
-        bact_mapped=$(grep "mapped:" "${TREATMENT_DIR}/${BINNER}_bacterial_stats.txt" | \
-            head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
-        bact_mapped=${bact_mapped:-0}
-    fi
-
-    # Map to non-bacterial sequences
-    nonbact_mapped=0
-    if [ "$nonbact_seqs" -gt 0 ]; then
-        log "  Mapping to non-bacterial sequences..."
-
-        bbmap.sh \
-            in1="$R1_PATH" \
-            in2="$R2_PATH" \
-            ref="$BINNER_NONBACTERIAL_FA" \
-            out="${TREATMENT_DIR}/${BINNER}_nonbacterial.bam" \
-            statsfile="${TREATMENT_DIR}/${BINNER}_nonbacterial_stats.txt" \
-            covstats="${TREATMENT_DIR}/${BINNER}_nonbacterial_covstats.txt" \
-            minid=0.95 \
-            ambiguous=random \
-            nodisk=true \
-            threads=${SLURM_CPUS_PER_TASK:-16} \
-            -Xmx${JAVA_MEM}g \
-            2>&1 | tee "${TREATMENT_DIR}/${BINNER}_nonbacterial_bbmap.log"
-
-        nonbact_mapped=$(grep "mapped:" "${TREATMENT_DIR}/${BINNER}_nonbacterial_stats.txt" | \
-            head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
-        nonbact_mapped=${nonbact_mapped:-0}
-    fi
-
-    # Get total reads (from first binner)
-    if [ $total_reads -eq 0 ]; then
-        if [ "$bact_seqs" -gt 0 ]; then
-            total_reads=$(grep "reads:" "${TREATMENT_DIR}/${BINNER}_bacterial_stats.txt" | \
-                head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
-        elif [ "$nonbact_seqs" -gt 0 ]; then
-            total_reads=$(grep "reads:" "${TREATMENT_DIR}/${BINNER}_nonbacterial_stats.txt" | \
-                head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
-        fi
-        total_reads=${total_reads:-0}
-    fi
-
-    # Calculate unmapped for this binner
-    unmapped=$((total_reads - bact_mapped - nonbact_mapped))
-
-    # Store results
-    binner_bacterial_reads[$BINNER]=$bact_mapped
-    binner_nonbacterial_reads[$BINNER]=$nonbact_mapped
-    binner_unmapped_reads[$BINNER]=$unmapped
-
-    log "  Results for $BINNER:"
-    log "    Bacterial: $bact_mapped reads"
-    log "    Non-bacterial: $nonbact_mapped reads"
-    log "    Unmapped: $unmapped reads"
+    # Load results from stats files (same logic for both fresh and checkpoint cases)
+    load_binner_results "$BINNER"
 done
 
 deactivate_env
+
+# Report any failed binners
+if [ ${#FAILED_BINNERS[@]} -gt 0 ]; then
+    log "WARNING: ${#FAILED_BINNERS[@]} binner(s) failed: ${FAILED_BINNERS[*]}"
+    log "Successfully completed binners will still be included in summary"
+    log "Re-run this script to retry failed binners"
+fi
 
 # Calculate averages across binners
 log "Calculating average results across binners..."

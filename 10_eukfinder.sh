@@ -70,6 +70,10 @@ mkdir -p "$EUKFINDER_OUTPUT_DIR"
 # Create log directory
 mkdir -p "${LOG_DIR}/eukfinder_output/${TREATMENT}"
 
+# Redirect all output to a log file (works regardless of how script is invoked)
+SCRIPT_LOG="${LOG_DIR}/eukfinder_output/${TREATMENT}/${OUTPUT_PREFIX}_${SLURM_JOB_ID:-local}_${SLURM_ARRAY_TASK_ID:-0}.log"
+exec > >(tee -a "$SCRIPT_LOG") 2>&1
+
 # Setup temporary directory for this bin
 TEMP_DIR=$(mktemp -d -p "${WORK_DIR}" eukfinder_${SAMPLE}_${BINNER}_XXXXXX)
 log "Created temporary directory: $TEMP_DIR"
