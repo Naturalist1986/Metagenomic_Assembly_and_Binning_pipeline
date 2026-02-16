@@ -205,7 +205,8 @@ for BINNER in "${BINNERS[@]}"; do
             2>&1 | tee "${TREATMENT_DIR}/${BINNER}_bacterial_bbmap.log"
 
         bact_mapped=$(grep "mapped:" "${TREATMENT_DIR}/${BINNER}_bacterial_stats.txt" | \
-            awk '{print $3}' | sed 's/,//g' || echo "0")
+            head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
+        bact_mapped=${bact_mapped:-0}
     fi
 
     # Map to non-bacterial sequences
@@ -227,18 +228,20 @@ for BINNER in "${BINNERS[@]}"; do
             2>&1 | tee "${TREATMENT_DIR}/${BINNER}_nonbacterial_bbmap.log"
 
         nonbact_mapped=$(grep "mapped:" "${TREATMENT_DIR}/${BINNER}_nonbacterial_stats.txt" | \
-            awk '{print $3}' | sed 's/,//g' || echo "0")
+            head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
+        nonbact_mapped=${nonbact_mapped:-0}
     fi
 
     # Get total reads (from first binner)
     if [ $total_reads -eq 0 ]; then
         if [ "$bact_seqs" -gt 0 ]; then
             total_reads=$(grep "reads:" "${TREATMENT_DIR}/${BINNER}_bacterial_stats.txt" | \
-                head -1 | awk '{print $2}' | sed 's/,//g')
+                head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
         elif [ "$nonbact_seqs" -gt 0 ]; then
             total_reads=$(grep "reads:" "${TREATMENT_DIR}/${BINNER}_nonbacterial_stats.txt" | \
-                head -1 | awk '{print $2}' | sed 's/,//g')
+                head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
         fi
+        total_reads=${total_reads:-0}
     fi
 
     # Calculate unmapped for this binner
