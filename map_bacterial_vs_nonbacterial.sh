@@ -4,8 +4,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=64G
-#SBATCH --time=12:00:00
+#SBATCH --mem=128G
+#SBATCH --time=16:00:00
 #SBATCH --account=ofinkel
 
 # map_bacterial_vs_nonbacterial.sh - Map reads to bacterial vs non-bacterial sequences
@@ -34,12 +34,12 @@ log "Starting bacterial vs non-bacterial mapping (Array index: $ARRAY_INDEX)"
 
 # Calculate Java memory allocation
 # SLURM_MEM_PER_NODE is in MB, need to convert to GB for Java -Xmx
-# Leave some overhead (use 90% of allocated memory)
+# Leave some overhead (use 70% of allocated memory for large file I/O)
 if [ -n "${SLURM_MEM_PER_NODE:-}" ]; then
     # SLURM_MEM_PER_NODE is in MB, convert to GB
     MEM_GB=$((SLURM_MEM_PER_NODE / 1024))
-    # Use 90% to leave overhead
-    JAVA_MEM=$((MEM_GB * 9 / 10))
+    # Use 70% to leave overhead for BAM/FASTA file operations
+    JAVA_MEM=$((MEM_GB * 7 / 10))
 else
     # Default to 48GB if not in SLURM environment
     JAVA_MEM=48
