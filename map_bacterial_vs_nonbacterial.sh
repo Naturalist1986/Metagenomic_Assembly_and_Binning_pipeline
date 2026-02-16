@@ -32,6 +32,20 @@ ARRAY_INDEX=${SLURM_ARRAY_TASK_ID:-0}
 
 log "Starting bacterial vs non-bacterial mapping (Array index: $ARRAY_INDEX)"
 
+# Calculate Java memory allocation
+# SLURM_MEM_PER_NODE is in MB, need to convert to GB for Java -Xmx
+# Leave some overhead (use 90% of allocated memory)
+if [ -n "${SLURM_MEM_PER_NODE:-}" ]; then
+    # SLURM_MEM_PER_NODE is in MB, convert to GB
+    MEM_GB=$((SLURM_MEM_PER_NODE / 1024))
+    # Use 90% to leave overhead
+    JAVA_MEM=$((MEM_GB * 9 / 10))
+else
+    # Default to 48GB if not in SLURM environment
+    JAVA_MEM=48
+fi
+log "Using ${JAVA_MEM}G memory for Java processes"
+
 # Define directories
 # Allow EUKFINDER_DIR to be overridden, otherwise use OUTPUT_DIR/eukfinder_output
 EUKFINDER_DIR="${EUKFINDER_DIR:-${OUTPUT_DIR}/eukfinder_output}"
@@ -217,7 +231,7 @@ for BINNER in "${BINNERS[@]}"; do
             minid=0.95 \
             ambiguous=random \
             threads=${SLURM_CPUS_PER_TASK:-16} \
-            -Xmx${SLURM_MEM_PER_NODE:-64}g \
+            -Xmx${JAVA_MEM}g \
             2>&1 | tee "${TREATMENT_DIR}/${BINNER}_bacterial_bbmap.log"
 
         bact_mapped=$(grep "mapped:" "${TREATMENT_DIR}/${BINNER}_bacterial_stats.txt" | \
@@ -240,7 +254,7 @@ for BINNER in "${BINNERS[@]}"; do
             minid=0.95 \
             ambiguous=random \
             threads=${SLURM_CPUS_PER_TASK:-16} \
-            -Xmx${SLURM_MEM_PER_NODE:-64}g \
+            -Xmx${JAVA_MEM}g \
             2>&1 | tee "${TREATMENT_DIR}/${BINNER}_nonbacterial_bbmap.log"
 
         nonbact_mapped=$(grep "mapped:" "${TREATMENT_DIR}/${BINNER}_nonbacterial_stats.txt" | \
