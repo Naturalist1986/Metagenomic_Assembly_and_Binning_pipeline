@@ -232,9 +232,9 @@ load_binner_results() {
     # Get total reads if not set yet
     if [ $total_reads -eq 0 ]; then
         if [ -f "$bact_stats" ]; then
-            total_reads=$(grep "reads:" "$bact_stats" | head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
+            total_reads=$(grep "Reads Used:" "$bact_stats" | head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
         elif [ -f "$nonbact_stats" ]; then
-            total_reads=$(grep "reads:" "$nonbact_stats" | head -1 | awk '{print $2}' | sed 's/,//g' | tr -d '\n\r')
+            total_reads=$(grep "Reads Used:" "$nonbact_stats" | head -1 | awk '{print $3}' | sed 's/,//g' | tr -d '\n\r' || echo "0")
         fi
         total_reads=${total_reads:-0}
     fi
