@@ -174,8 +174,19 @@ for BINNER in "${BINNERS[@]}"; do
     done
 
     # Check if we have sequences for this binner
-    bact_seqs=$(grep -c "^>" "$BINNER_BACTERIAL_FA" 2>/dev/null || echo "0")
-    nonbact_seqs=$(grep -c "^>" "$BINNER_NONBACTERIAL_FA" 2>/dev/null || echo "0")
+    if [ -s "$BINNER_BACTERIAL_FA" ]; then
+        bact_seqs=$(grep -c "^>" "$BINNER_BACTERIAL_FA" 2>/dev/null | head -1 | tr -d '\n\r')
+    else
+        bact_seqs=0
+    fi
+    bact_seqs=${bact_seqs:-0}
+
+    if [ -s "$BINNER_NONBACTERIAL_FA" ]; then
+        nonbact_seqs=$(grep -c "^>" "$BINNER_NONBACTERIAL_FA" 2>/dev/null | head -1 | tr -d '\n\r')
+    else
+        nonbact_seqs=0
+    fi
+    nonbact_seqs=${nonbact_seqs:-0}
 
     if [ "$bact_seqs" -eq 0 ] && [ "$nonbact_seqs" -eq 0 ]; then
         log "  No sequences found for binner $BINNER - skipping"
