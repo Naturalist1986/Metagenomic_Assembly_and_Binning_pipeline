@@ -274,7 +274,10 @@ deactivate_env
 # Calculate averages across binners
 log "Calculating average results across binners..."
 
+# Safely check array length (set -u compatible)
+set +u
 num_binners=${#binner_bacterial_reads[@]}
+set -u
 
 if [ $num_binners -eq 0 ]; then
     log "ERROR: No binners had mappable sequences"
