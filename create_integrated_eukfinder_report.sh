@@ -36,25 +36,26 @@ check_eukfinder_results() {
     # Check if EukFinder results exist and count treatments
     # Returns: number of treatments found (0 = error)
 
-    echo "Step 1: Checking EukFinder results..."
-    echo "-------------------------------------------------------------------"
+    echo "Step 1: Checking EukFinder results..." >&2
+    echo "-------------------------------------------------------------------" >&2
 
     local eukfinder_dir="${OUTPUT_DIR}/eukfinder_output"
 
     if [ ! -d "$eukfinder_dir" ]; then
-        echo "ERROR: EukFinder directory not found: $eukfinder_dir"
-        echo ""
-        echo "Please run EukFinder first:"
-        echo "  ./submit_eukfinder_all_bins.sh"
-        echo ""
-        echo "This will classify sequences in all bins into:"
-        echo "  - Bacterial (Bact)"
-        echo "  - Archaeal (Arch)"
-        echo "  - Eukaryotic (Euk)"
-        echo "  - Unknown (Unk)"
-        echo "  - Eukaryotic+Unknown (EUnk)"
-        echo "  - Miscellaneous (Misc)"
-        echo ""
+        echo "ERROR: EukFinder directory not found: $eukfinder_dir" >&2
+        echo "" >&2
+        echo "Please run EukFinder first:" >&2
+        echo "  ./submit_eukfinder_all_bins.sh" >&2
+        echo "" >&2
+        echo "This will classify sequences in all bins into:" >&2
+        echo "  - Bacterial (Bact)" >&2
+        echo "  - Archaeal (Arch)" >&2
+        echo "  - Eukaryotic (Euk)" >&2
+        echo "  - Unknown (Unk)" >&2
+        echo "  - Eukaryotic+Unknown (EUnk)" >&2
+        echo "  - Miscellaneous (Misc)" >&2
+        echo "" >&2
+        echo "0"
         return 0
     fi
 
@@ -84,37 +85,38 @@ check_eukfinder_results() {
     done
 
     if [ "$treatment_count" -eq 0 ]; then
-        echo "ERROR: No treatments with EukFinder results found in $eukfinder_dir"
-        echo ""
-        echo "Please run EukFinder first:"
-        echo "  ./submit_eukfinder_all_bins.sh"
-        echo ""
+        echo "ERROR: No treatments with EukFinder results found in $eukfinder_dir" >&2
+        echo "" >&2
+        echo "Please run EukFinder first:" >&2
+        echo "  ./submit_eukfinder_all_bins.sh" >&2
+        echo "" >&2
+        echo "0"
         return 0
     fi
 
-    echo "✓ Found EukFinder results for $treatment_count treatments:"
+    echo "✓ Found EukFinder results for $treatment_count treatments:" >&2
     for treatment in "${treatments[@]}"; do
-        echo "  - $treatment"
+        echo "  - $treatment" >&2
     done
-    echo ""
+    echo "" >&2
 
-    return "$treatment_count"
+    echo "$treatment_count"
 }
 
 check_mapping_status() {
     # Check if mapping jobs are complete, in progress, or not started
     # Returns: status string ("complete", "partial", or "not_started")
 
-    echo "Step 2: Checking mapping status..."
-    echo "-------------------------------------------------------------------"
+    echo "Step 2: Checking mapping status..." >&2
+    echo "-------------------------------------------------------------------" >&2
 
     local mapping_dir="${OUTPUT_DIR}/bacterial_vs_nonbacterial_mapping"
     local eukfinder_dir="${OUTPUT_DIR}/eukfinder_output"
 
     # Check if mapping directory exists
     if [ ! -d "$mapping_dir" ]; then
-        echo "Mapping not started yet"
-        echo ""
+        echo "Mapping not started yet" >&2
+        echo "" >&2
         echo "not_started"
         return 0
     fi
@@ -156,23 +158,23 @@ check_mapping_status() {
     done
 
     if [ "$completed_treatments" -eq 0 ]; then
-        echo "Mapping directory exists but no completed mappings found"
-        echo ""
+        echo "Mapping directory exists but no completed mappings found" >&2
+        echo "" >&2
         echo "not_started"
         return 0
     elif [ "$completed_treatments" -eq "$total_treatments" ]; then
-        echo "✓ Mapping completed for $completed_treatments/$total_treatments treatments"
-        echo ""
+        echo "✓ Mapping completed for $completed_treatments/$total_treatments treatments" >&2
+        echo "" >&2
         echo "complete"
         return 0
     else
-        echo "⚠ Mapping partially completed: $completed_treatments/$total_treatments treatments"
-        echo ""
-        echo "Missing results for:"
+        echo "⚠ Mapping partially completed: $completed_treatments/$total_treatments treatments" >&2
+        echo "" >&2
+        echo "Missing results for:" >&2
         for treatment in "${missing_treatments[@]}"; do
-            echo "  - $treatment"
+            echo "  - $treatment" >&2
         done
-        echo ""
+        echo "" >&2
         echo "partial"
         return 0
     fi
