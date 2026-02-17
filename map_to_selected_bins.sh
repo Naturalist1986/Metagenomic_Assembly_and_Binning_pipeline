@@ -93,17 +93,34 @@ fi
 CONCAT_REF="${TREATMENT_DIR}/selected_bins_concat.fasta"
 
 # Concatenate all .fa files from the selected bins directory
+# Handles both coassembly (*.fa directly) and individual (sample_subdir/*.fa) layouts
 > "$CONCAT_REF"
 bin_count=0
+
+# First try direct .fa files (coassembly mode)
 for bin_fa in "${SELECTED_DIR}"/*.fa; do
     if [ -f "$bin_fa" ]; then
         cat "$bin_fa" >> "$CONCAT_REF"
-        ((bin_count++))
+        bin_count=$((bin_count + 1))
     fi
 done
 
+# If none found, try sample subdirectories (individual assembly mode)
 if [ $bin_count -eq 0 ]; then
-    log "ERROR: No .fa files found in $SELECTED_DIR"
+    for sample_dir in "${SELECTED_DIR}"/*/; do
+        if [ -d "$sample_dir" ]; then
+            for bin_fa in "${sample_dir}"*.fa; do
+                if [ -f "$bin_fa" ]; then
+                    cat "$bin_fa" >> "$CONCAT_REF"
+                    bin_count=$((bin_count + 1))
+                fi
+            done
+        fi
+    done
+fi
+
+if [ $bin_count -eq 0 ]; then
+    log "ERROR: No .fa files found in $SELECTED_DIR or its subdirectories"
     exit 1
 fi
 
