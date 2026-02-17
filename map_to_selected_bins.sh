@@ -259,42 +259,49 @@ activate_env bbmap
 
 COUNTS_FILE="${TREATMENT_DIR}/category_counts.txt"
 
-# Map reads to combined reference, stream SAM through awk to count per category.
-# BBMap writes SAM to stdout, statsfile to disk, logs to stderr.
-# awk counts each mapped read by its reference contig tag (MAG__ / BACT__ / NONBACT__).
-# Unmapped reads have RNAME=* and are not counted by awk (computed from total later).
+# Map reads to combined reference. Use covstats for per-scaffold read counts.
+# We write to BAM (proven to work), then count reads per tag prefix from covstats,
+# then delete the BAM to save disk space.
 bbmap.sh \
     in1="$R1_PATH" \
     in2="$R2_PATH" \
     ref="$COMBINED_REF" \
-    out=stdout.sam \
+    out="${TREATMENT_DIR}/combined.bam" \
     statsfile="${TREATMENT_DIR}/combined_stats.txt" \
+    covstats="${TREATMENT_DIR}/combined_covstats.txt" \
     minid=0.95 \
     ambiguous=random \
     nodisk=true \
     threads=${SLURM_CPUS_PER_TASK:-32} \
     -Xmx${JAVA_MEM}g \
-    2>"${TREATMENT_DIR}/combined_bbmap.log" \
-| awk '
-    BEGIN { mag=0; bact=0; nonbact=0 }
-    /^@/ { next }
-    {
-        if ($3 ~ /^MAG__/) mag++
-        else if ($3 ~ /^BACT__/) bact++
-        else if ($3 ~ /^NONBACT__/) nonbact++
-    }
-    END {
-        print "mag_reads=" mag
-        print "bact_reads=" bact
-        print "nonbact_reads=" nonbact
-    }
-' > "$COUNTS_FILE"
+    2>&1 | tee "${TREATMENT_DIR}/combined_bbmap.log"
 
 deactivate_env
 
+# Delete BAM to save disk space (we only need covstats for counting)
+rm -f "${TREATMENT_DIR}/combined.bam"
+
+# Count per-category mapped reads from covstats
+# covstats columns: #ID Avg_fold Length Ref_GC Covered_percent Covered_bases Plus_reads Minus_reads ...
+# Total reads per scaffold = Plus_reads ($7) + Minus_reads ($8)
+log "Counting reads per category from covstats..."
+awk -F'\t' '
+    NR > 1 {
+        reads = $7 + $8
+        if ($1 ~ /^MAG__/) mag += reads
+        else if ($1 ~ /^BACT__/) bact += reads
+        else if ($1 ~ /^NONBACT__/) nonbact += reads
+    }
+    END {
+        print "mag_reads=" mag+0
+        print "bact_reads=" bact+0
+        print "nonbact_reads=" nonbact+0
+    }
+' "${TREATMENT_DIR}/combined_covstats.txt" > "$COUNTS_FILE"
+
 # Verify counts file was produced
 if [ ! -s "$COUNTS_FILE" ]; then
-    log "ERROR: Category counts not produced. Check: ${TREATMENT_DIR}/combined_bbmap.log"
+    log "ERROR: Category counts not produced. Check covstats and bbmap log."
     exit 1
 fi
 
